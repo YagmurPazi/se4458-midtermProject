@@ -7,7 +7,9 @@ _format_version: "3.0"
 
 services:
   - name: tuition-api
-    url: http://tuition-api:3000
+    # Replaced at container start by render-config.sh from UPSTREAM_URL
+    # (Docker Compose: http://tuition-api:3000, Azure Container Apps: http://tuition-api).
+    url: __UPSTREAM_URL__
     plugins:
       # Gateway default for every route of the service: 120 requests per minute per client IP.
       # A route-level rate-limiting plugin (mobile query below) replaces this default for that route.

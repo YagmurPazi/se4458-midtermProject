@@ -13,9 +13,17 @@ if [[ -z "${JWT_SECRET:-}" ]]; then
   exit 1
 fi
 
-# The value sits inside a single-quoted YAML string, where a single quote is written as two.
+# Address of the Tuition API service as seen from Kong.
+UPSTREAM_URL="${UPSTREAM_URL:-http://tuition-api:3000}"
+if [[ ! "$UPSTREAM_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+  echo "render-config: UPSTREAM_URL must look like http://host[:port], got '$UPSTREAM_URL'" >&2
+  exit 1
+fi
+
+# The secret sits inside a single-quoted YAML string, where a single quote is written as two.
 escaped="${JWT_SECRET//\'/\'\'}"
 content="$(<"$TEMPLATE")"
+content="${content//__UPSTREAM_URL__/$UPSTREAM_URL}"
 printf '%s\n' "${content//__JWT_SECRET__/$escaped}" > "$RENDERED"
 chmod 600 "$RENDERED"
 

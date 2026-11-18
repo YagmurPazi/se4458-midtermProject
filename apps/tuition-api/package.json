@@ -11,7 +11,8 @@
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
-    "test:int": "jest --config jest.int.config.js --runInBand"
+    "test:int": "jest --config jest.int.config.js --runInBand",
+    "db:setup": "prisma migrate deploy && node dist/seed/seed.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

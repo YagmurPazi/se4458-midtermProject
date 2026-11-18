@@ -13,11 +13,11 @@ A conversational assistant that answers student questions about tuition deadline
 6. [AI Agent](#6-ai-agent)
 7. [Data model](#7-data-model)
 8. [Running locally](#8-running-locally) _(partly TBD)_
-9. [Cloud deployment](#9-cloud-deployment) _TBD_
+9. [Cloud deployment](#9-cloud-deployment)
 10. [Testing](#10-testing)
 11. [Demonstration evidence](#11-demonstration-evidence) _TBD_
 12. [Assumptions and design decisions](#12-assumptions-and-design-decisions)
-13. [LLM cost](#13-llm-cost) _TBD_
+13. [Cost](#13-cost)
 
 ## 1. Architecture
 
@@ -68,7 +68,7 @@ Kong Gateway OSS 3.9 in DB-less mode. Every REST operation, including the AI Age
 | | |
 |---|---|
 | Gateway URL (local) | `http://localhost:8000` |
-| Gateway URL (cloud) | _TBD (Stage 7)_ |
+| Gateway URL (cloud) | See §9 |
 | Configuration | [`gateway/kong.yml`](gateway/kong.yml), image [`gateway/Dockerfile`](gateway/Dockerfile) |
 | Upstream | Tuition API service `http://tuition-api:3000` |
 
@@ -137,7 +137,7 @@ A real MCP server built with the official `@modelcontextprotocol/sdk` ([`apps/mc
 | | |
 |---|---|
 | Endpoint (local) | `POST http://localhost:3001/mcp` (Streamable HTTP transport) |
-| Endpoint (cloud) | _TBD (Stage 7)_ |
+| Endpoint (cloud) | See §9 |
 | Authentication | `x-api-key` header, compared in constant time; otherwise `401` |
 | Health | `GET /health` (public) → `{ "status": "ok", "document": "UNI-TUITION-2026-01", "chunks": 25 }` |
 | Local stdio mode | `npm run start:stdio -w apps/mcp-server` (for MCP clients that start the server themselves) |
@@ -362,7 +362,52 @@ Fictitious accounts created by the seed, for local and demo use only.
 | `20230001` … `20230025` (student number) | `Student#2026` | `STUDENT` |
 
 ## 9. Cloud deployment
-_TBD (Stage 7)._
+
+Microsoft Azure, deployed with the Azure CLI scripts in [`infra/`](infra). The CLI agent runs on the user's machine and connects to the cloud gateway and MCP server.
+
+```
+                         Azure Container Apps environment
+Agent (local) ──HTTPS──► Kong gateway (external, 1 replica) ──HTTPS──► Tuition API (internal ingress) ──TLS──► PostgreSQL Flexible Server
+       │                                                                                                  (Burstable B1ms, PG 16)
+       └──HTTPS + x-api-key──► MCP server (external)
+```
+
+| Component | Azure resource | Settings |
+|---|---|---|
+| Tuition API | Container App `tuition-api` | **Internal ingress only**: reachable from Kong, not from the internet. 0.5 vCPU / 1 GiB, scales 0–2. Applies migrations on start |
+| API gateway | Container App `tuition-gateway` (Kong image from `gateway/Dockerfile`) | External HTTPS ingress, **exactly 1 replica** so the in-memory mobile rate-limit counters are exact (§12.4). 0.25 vCPU / 0.5 GiB |
+| MCP server | Container App `tuition-mcp` | External HTTPS ingress, `x-api-key`; not behind the gateway. 0.25 vCPU / 0.5 GiB, scales 0–2 |
+| Database | Azure Database for PostgreSQL Flexible Server | Burstable B1ms, PostgreSQL 16, 32 GB, TLS required, reachable from Azure services only |
+| Demo data | Container Apps Job `tuition-seed` (manual) | Runs `npm run db:setup` (migrations + seed) in the API image |
+| Images | Azure Container Registry (Basic) | Built in Azure with `az acr build` (linux/amd64) |
+
+Secrets (`JWT_SECRET`, database URL, `MCP_API_KEY`) are generated on the first run, stored as Container Apps secrets and kept locally in `infra/.deploy-state.env`, which is not committed. Kong and the API receive the same `JWT_SECRET`.
+
+### Deploy
+Requirements: Azure CLI, an Azure subscription (Azure for Students works) and `openssl`.
+```bash
+az login
+cp infra/config.env.example infra/config.env    # region and names; see the notes in the file
+./infra/deploy.sh                               # about 15-20 minutes the first time
+```
+The script is idempotent: running it again rebuilds the images and updates the apps without changing names or secrets. At the end it prints the URLs and writes `infra/cloud.env` (gateway URL, MCP URL and key) for the agent and the tests:
+```bash
+./gateway/smoke-test.sh https://<gateway-fqdn>
+set -a; source infra/cloud.env; set +a
+npm run demo -w apps/mcp-server     # three MCP queries against the cloud server
+npm run start -w apps/agent         # the agent against the cloud services
+```
+Remove everything with `./infra/destroy.sh` (asks for the resource group name, then deletes it).
+
+Azure for Students subscriptions may allow only some regions. If a step fails with a policy or region error, set another `LOCATION` in `infra/config.env` and run the script again.
+
+### Deployed URLs
+| | URL |
+|---|---|
+| Gateway | _TBD (filled in after the deployment)_ |
+| Swagger UI | _TBD_ |
+| MCP server | _TBD_ |
+
 
 ## 10. Testing
 
@@ -512,5 +557,17 @@ These details were fixed while implementing the API; [docs/API.md](docs/API.md) 
 - The CLI agent runs on the user's machine and connects to the cloud gateway and MCP URLs.
 - Secrets (JWT secret, database URL, Gemini API key, MCP API key) are supplied as environment variables and are never committed.
 
-## 13. LLM cost
-_TBD._
+## 13. Cost
+
+### Cloud (Azure, approximate, West Europe prices)
+| Resource | Cost |
+|---|---|
+| PostgreSQL Flexible Server B1ms + 32 GB | Free for the first 12 months on a new Azure for Students / free account (750 hours per month) |
+| Kong (0.25 vCPU / 0.5 GiB, always on) | About 10–15 USD per month after the monthly Container Apps free grant |
+| Tuition API and MCP server (scale to zero) | Within the free grant for demo traffic |
+| Container Registry Basic | About 5 USD per month |
+
+Together about 15–20 USD per month, covered by the Azure for Students credit. The resources are meant to be deleted with `infra/destroy.sh` after grading. The API and MCP server scale to zero when idle, which is why the first request after a pause is slower.
+
+### LLM
+_TBD (Stage 8: measured token use of the demo scenarios)._

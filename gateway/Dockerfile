@@ -3,7 +3,8 @@
 FROM kong:3.9
 
 COPY --chown=kong:kong kong.yml /kong/kong.yml
-COPY --chown=kong:kong --chmod=755 render-config.sh /kong/render-config.sh
+# render-config.sh keeps its executable bit from the repository.
+COPY --chown=kong:kong render-config.sh /kong/render-config.sh
 
 ENV KONG_DATABASE=off \
     KONG_DECLARATIVE_CONFIG=/tmp/kong.yml \

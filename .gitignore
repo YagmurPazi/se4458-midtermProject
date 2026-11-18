@@ -6,3 +6,6 @@ coverage
 .DS_Store
 .claude/settings.local.json
 logs
+infra/config.env
+infra/.deploy-state.env
+infra/cloud.env
