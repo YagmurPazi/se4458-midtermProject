@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: tuition
+      POSTGRES_USER: tuition
+      POSTGRES_PASSWORD: tuition
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tuition -d tuition"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tuition-api:
+    build:
+      context: .
+      dockerfile: apps/tuition-api/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://tuition:tuition@postgres:5432/tuition?schema=public
+      PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: apps/mcp-server/Dockerfile
+    env_file: .env
+    environment:
+      PORT: "3001"
+
+  kong:
+    image: kong:3.9
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+    volumes:
+      - ./gateway/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "8000:8000"
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      - tuition-api
+
+volumes:
+  postgres_data:

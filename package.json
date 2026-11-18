@@ -1,0 +1,19 @@
+{
+  "name": "se4458-midtermproject",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Tuition Assistant - SE 4458 midterm",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

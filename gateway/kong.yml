@@ -1,0 +1,12 @@
+_format_version: "3.0"
+
+# Stage 0 skeleton: only the health route is exposed.
+# More routes (auth, tuition, payments, admin, ...) come in Stage 4.
+services:
+  - name: tuition-api
+    url: http://tuition-api:3000
+    routes:
+      - name: health
+        paths:
+          - /api/v1/health
+        strip_path: false

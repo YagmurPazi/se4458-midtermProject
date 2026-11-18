@@ -1,0 +1,79 @@
+# CLAUDE.md — SE 4458 Midterm: AI Tuition Assistant (Group 1)
+
+Individual university project (Yaşar University, SE 4458 Software Architecture & Design of Modern Large Scale Systems). Owner: Yağmur Pazı.
+
+## Working rules (follow every session)
+- **Talk to the user in Turkish.** Write all code, comments, commit messages, README and docs in **English**.
+- **Ask for confirmation before each stage and before any change to the repo, commit or push.** Show what you plan, then do it.
+- Explain technical changes **briefly and simply**, staying professional.
+- Never commit secrets (`.env`, API keys). `.env.example` holds placeholders only.
+- **No AI attribution anywhere**: no `Co-Authored-By`, "Generated with Claude", session links or similar lines in commit messages, PR descriptions or files.
+- Model use: the main session handles design, the MCP server and the agent. Delegate large, well-defined work to the subagents in `.claude/agents/` and tell the user in one line which agent and model you are using.
+- Before marking any stage done, run `npm run build`, `npm test` and `npm run lint` at the repo root.
+
+## Sources of truth
+- `docs/API.md`: REST contract (routes, bodies, error codes). Change the code to match the contract, or update the contract **with the user's approval**.
+- `README.md` §12: all agreed assumptions and design decisions. These are final unless the user changes them.
+- `apps/mcp-server/data/University_Tuition_Policies.md`: the instructor-provided policy document. Do not edit it.
+- The requirements checklist below, condensed from the assignment.
+
+## Architecture (required by the assignment)
+```
+CLI chat → Agent ──► Gemini (function calling: tool selection + answer)
+             ├─ MCP client ──HTTP──► MCP server ──► MiniSearch index of the policy .md
+             └─ REST ──► Kong gateway ──► Tuition API (NestJS) ──► PostgreSQL
+```
+The agent executes all tool calls; the LLM never calls backends. The MCP path does not go through the gateway. Every REST call (including the agent's) goes through Kong.
+
+## Stack (decided)
+- npm workspaces monorepo, TypeScript (strict), Node ≥ 20 (user has v26).
+- `apps/tuition-api`: NestJS 11, Prisma 6 + PostgreSQL 16, @nestjs/swagger (Swagger UI at `/api/docs`), JWT (HS256) via @nestjs/jwt + passport-jwt, Jest + Supertest.
+- `apps/mcp-server`: @modelcontextprotocol/sdk, MiniSearch (BM25), Streamable HTTP transport (stdio also), protected by an `x-api-key` header.
+- `apps/agent`: plain TypeScript CLI, @google/genai (Gemini Flash, free tier), MCP SDK client.
+- `gateway/kong.yml`: Kong OSS 3.x, DB-less.
+- Local: `docker-compose.yml` (postgres, tuition-api, mcp-server, kong). Cloud: Azure Container Apps + Azure Database for PostgreSQL Flexible Server (B1MS, free 12 months; the user's Azure for Students account is new).
+
+## Key decisions (details in README §12)
+- Routes under `/api/v1`. Roles: `STUDENT` (own records only), `BANK` (any student), `ADMIN`.
+- Mobile Query Tuition: `GET /api/v1/mobile/tuition` with header `X-Student-No`, no auth. Kong `rate-limiting` with `limit_by: header`, `day: 3`, `policy: local`, single Kong instance. UTC day; every call counts.
+- Banking Query: `GET /api/v1/banking/tuition/{studentNo}?term=`. Pay: `POST /api/v1/banking/payments` (`transactionId` = idempotency key → `409 DUPLICATE_TRANSACTION`; amount > balance → `422 AMOUNT_EXCEEDS_BALANCE`; row lock with `SELECT … FOR UPDATE`).
+- Admin: Add Tuition (upsert on studentNo+term; `422 AMOUNT_BELOW_PAID`; student must exist → 404), Batch CSV (row-independent, `DUPLICATE_IN_FILE`), Unpaid (balance > 0; `term` required; `sortBy=balance|studentNo`, `sortOrder=asc|desc`, default `balance desc`, tie-break `studentNo asc`; page past the last → `400 PAGE_OUT_OF_RANGE`; empty result → `totalPages: 0`).
+- Currency USD only. Money `NUMERIC(12,2)`; reject more than 2 decimals (no rounding). Balance is computed (amount − sum of payments), never stored.
+- Agent tools: `search_tuition_policies(query)`, `get_my_tuition(term?)`, `pay_my_tuition(term, amount)`. **No student-number parameter**: the number always comes from the logged-in user's JWT. **Payment confirmation is enforced in code**: show student, term, amount and current balance, then call the API only after an explicit "yes"/"confirm". The agent generates the transactionId (UUID).
+- MCP: one chunk per `###` subsection (or `##` without subsections). Index built at build time, loaded at startup. Result fields: `document`, `documentId`, `section`, `heading`, `text`.
+
+## Stage plan and status
+| # | Stage | Status |
+|---|---|---|
+| 0 | Monorepo skeleton | Done |
+| 1 | API contract (`docs/API.md`) + assumptions (README §12) | Done |
+| 2 | Prisma schema, migration, seed data, ER diagram (Mermaid in `docs/`) | Next |
+| 3 | REST API + unit tests (every operation: ≥1 success and ≥1 failure test) | |
+| 4 | Kong: versioned routes, JWT on protected routes, per-student rate limit, sample error response | |
+| 5 | MCP server: chunking, index, tool, 3 distinct retrieval tests | |
+| 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | |
+| 7 | Azure deployment scripts in `infra/` (the user runs them in their own account) | |
+| 8 | Evidence + README: 3 agent scenarios, 3 MCP queries, protected route, confirmed payment, test run, video script | |
+| 9 | Independent review against the checklist (`reviewer` agent) | |
+
+Update this table when a stage finishes.
+
+## Known issues / notes
+- `npm install` reported 4 high-severity audit findings in Stage 0; review them in Stage 3.
+- Stage 0 changed the `tuition-api` build script to plain `tsc` because Prisma engines could not be downloaded in the cloud sandbox. On the user's Mac, run `npm run prisma:generate -w apps/tuition-api` and restore `prisma generate` in the build script.
+- Docker build context is the repo root (`context: .`, `dockerfile: apps/<app>/Dockerfile`).
+
+## Requirements checklist (condensed from the assignment)
+Grading: REST + business logic 25 · Agent/LLM tool calling 20 · MCP + indexing 20 · API Gateway 10 · DB + auth 10 · Cloud 5 · Testing + docs 10.
+- [ ] Real LLM function calling; no keyword routing. Flow: question → LLM picks tools → agent executes (REST via gateway) → results back to LLM → grounded answer with policy section references.
+- [ ] Three demonstrated interactions with tool traces (tool names, inputs, results, final answer): MCP-only, REST-only, MCP + REST.
+- [ ] Payment requires explicit confirmation. Account operations protected with auth.
+- [ ] Real MCP SDK server with `search_tuition_policies(query)` returning excerpts + section references; three distinct retrieval queries demonstrated; document indexed before queries, not per question.
+- [ ] All seven API operations as specified, with auth and paging as in the spec table; mobile query limited to 3 per student per day, keyed by student identity.
+- [ ] APIs versionable. Swagger UI or document.
+- [ ] Gateway routes ALL REST operations; at least two routed endpoints incl. one protected; versioned public routes; gateway URL, route mappings and one error response documented.
+- [ ] JWT/OAuth; agent cannot access another user's data via a number in the prompt; confirmation before write/payment.
+- [ ] Unit tests for all REST operations (≥1 success + ≥1 failure each), checking business logic, validation and responses; runnable without cloud or live LLM; test code, run instructions and evidence in README.
+- [ ] ER/data model; server database (not SQLite).
+- [ ] API, MCP, gateway and DB deployed on Azure (local deployment costs points). Document LLM cost and a low-cost/testable approach.
+- [ ] README contains everything: source, Swagger/OpenAPI, ER diagram, gateway URL/routes, MCP tool schema + indexing approach, deployment instructions/URLs, assumptions, test data and reproduction steps, screenshots/logs of all demos, short video link. Nothing goes only to Moodle.
