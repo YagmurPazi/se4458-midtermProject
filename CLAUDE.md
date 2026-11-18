@@ -47,8 +47,8 @@ The agent executes all tool calls; the LLM never calls backends. The MCP path do
 |---|---|---|
 | 0 | Monorepo skeleton | Done |
 | 1 | API contract (`docs/API.md`) + assumptions (README §12) | Done |
-| 2 | Prisma schema, migration, seed data, ER diagram (Mermaid in `docs/`) | Next |
-| 3 | REST API + unit tests (every operation: ≥1 success and ≥1 failure test) | |
+| 2 | Prisma schema, migration, seed data, ER diagram (Mermaid in `docs/`) | Done |
+| 3 | REST API + unit tests (every operation: ≥1 success and ≥1 failure test) | Next |
 | 4 | Kong: versioned routes, JWT on protected routes, per-student rate limit, sample error response | |
 | 5 | MCP server: chunking, index, tool, 3 distinct retrieval tests | |
 | 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | |
@@ -60,7 +60,9 @@ Update this table when a stage finishes.
 
 ## Known issues / notes
 - `npm install` reported 4 high-severity audit findings in Stage 0; review them in Stage 3.
-- Stage 0 changed the `tuition-api` build script to plain `tsc` because Prisma engines could not be downloaded in the cloud sandbox. On the user's Mac, run `npm run prisma:generate -w apps/tuition-api` and restore `prisma generate` in the build script.
+- Stage 2 restored `prisma generate` in the `tuition-api` build script. Prisma 6 warns that `package.json#prisma` (seed config) is deprecated for Prisma 7; fine while on Prisma 6.
+- Docker Desktop is installed on the user's Mac, but `~/.docker/bin` may be missing from the shell PATH: use `export PATH="$HOME/.docker/bin:$PATH"`. Local DB: `docker compose up -d postgres`, then `prisma:migrate` and `prisma:seed` (README §8).
+- Seed lives in `apps/tuition-api/src/seed/` (not `prisma/`) so it compiles to `dist/seed/seed.js` and can seed the cloud DB from the container. Password hashing: `src/auth/password.ts` (node:crypto scrypt), reuse it for login in Stage 3.
 - Docker build context is the repo root (`context: .`, `dockerfile: apps/<app>/Dockerfile`).
 
 ## Requirements checklist (condensed from the assignment)

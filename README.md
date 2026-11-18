@@ -11,8 +11,8 @@ A conversational assistant that answers student questions about tuition deadline
 4. [API Gateway](#4-api-gateway) _TBD_
 5. [MCP server and indexing](#5-mcp-server-and-indexing) _TBD_
 6. [AI Agent](#6-ai-agent) _TBD_
-7. [Data model](#7-data-model) _TBD_
-8. [Running locally](#8-running-locally) _TBD_
+7. [Data model](#7-data-model)
+8. [Running locally](#8-running-locally) _(partly TBD)_
 9. [Cloud deployment](#9-cloud-deployment) _TBD_
 10. [Testing](#10-testing) _TBD_
 11. [Demonstration evidence](#11-demonstration-evidence) _TBD_
@@ -71,10 +71,94 @@ _TBD (Stage 5)._
 _TBD (Stage 6)._
 
 ## 7. Data model
-_TBD (Stage 2)._
+
+PostgreSQL 16, managed with Prisma ([schema](apps/tuition-api/prisma/schema.prisma), [migrations](apps/tuition-api/prisma/migrations/)). Table details and design notes are in [docs/ER.md](docs/ER.md).
+
+```mermaid
+erDiagram
+    STUDENTS ||--o| USERS : "logs in as"
+    STUDENTS ||--o{ TUITIONS : "is billed"
+    TUITIONS ||--o{ PAYMENTS : "is paid by"
+    USERS |o--o{ PAYMENTS : "submits"
+
+    STUDENTS {
+        uuid id PK
+        varchar student_no UK "8 digits, e.g. 20230001"
+        varchar full_name
+        timestamptz created_at
+    }
+
+    USERS {
+        uuid id PK
+        varchar username UK "student number for students"
+        varchar password_hash "scrypt"
+        enum role "STUDENT, BANK or ADMIN"
+        uuid student_id FK, UK "set only for STUDENT"
+        timestamptz created_at
+    }
+
+    TUITIONS {
+        uuid id PK
+        uuid student_id FK "unique together with term"
+        varchar term "YYYY-FALL, YYYY-SPRING, YYYY-SUMMER"
+        numeric amount "NUMERIC(12,2), 0 < amount <= 1,000,000"
+        char currency "always USD"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    PAYMENTS {
+        uuid id PK
+        varchar transaction_id UK "idempotency key, 8-64 chars"
+        uuid tuition_id FK
+        numeric amount "NUMERIC(12,2), > 0"
+        uuid paid_by_user_id FK "STUDENT or BANK user, nullable"
+        timestamptz paid_at
+    }
+```
+
+- **Balance is computed, not stored:** `balance = tuitions.amount − SUM(payments.amount)`.
+- Money is `NUMERIC(12,2)`; currency is always `USD`.
+- `tuitions` is unique on (`student_id`, `term`), the key of the Add Tuition upsert. `payments.transaction_id` is unique, the idempotency key of Pay Tuition.
+- CHECK constraints repeat the API validation at database level: student number format, term format, `0 < amount ≤ 1,000,000`, currency `USD`, payment amount `> 0`, transaction ID format, and "a `STUDENT` user is linked to exactly one student".
+
+### Seed data
+The seed ([`src/seed/seed-data.ts`](apps/tuition-api/src/seed/seed-data.ts)) is fictitious and can be run any number of times without creating duplicates.
+
+| Student | Records | Used for |
+|---|---|---|
+| `20230001` Elif Demir | 2026-FALL $3,000 (paid $1,500), 2027-SPRING $3,000 (unpaid) | Main agent demo student, overall query with per-term breakdown |
+| `20230002` Can Öztürk | 2026-FALL $2,500 (fully paid by the bank), 2027-SPRING $2,500 (unpaid) | Second student for the cross-student access demo |
+| `20230003` Deniz Kaya | 2026-FALL $3,000 (unpaid) | Unpaid list |
+| `20230004` Zeynep Arslan | 2026-FALL $2,800 (fully paid in two payments) | Not in the unpaid list |
+| `20230005` Mert Çelik | 2026-FALL $3,000 (paid $2,750, balance $250) | Balance below the $300 installment threshold (policy §3.1) |
+| `20230006`–`20230024` | 2026-FALL $2,500–$3,500, some partly paid | Paging: 22 unpaid students in 2026-FALL, so the default page size of 20 gives two pages |
+| `20230025` Efe Turan | none | `TUITION_NOT_FOUND` cases |
 
 ## 8. Running locally
-_TBD._
+
+_The full guide (API, MCP server, gateway and agent) is completed in later stages._
+
+### Database
+```bash
+cp .env.example .env
+docker compose up -d postgres
+npm run prisma:migrate -w apps/tuition-api
+npm run prisma:seed -w apps/tuition-api
+```
+`prisma:migrate` applies the migrations (`prisma migrate deploy`); `prisma:seed` loads the demo data. Both read `DATABASE_URL` from the environment or from `apps/tuition-api/.env`; export it first if needed:
+```bash
+export DATABASE_URL=postgresql://tuition:tuition@localhost:5432/tuition?schema=public
+```
+
+### Demo accounts
+Fictitious accounts created by the seed, for local and demo use only.
+
+| Username | Password | Role |
+|---|---|---|
+| `admin` | `Admin#2026` | `ADMIN` |
+| `bank` | `Bank#2026` | `BANK` |
+| `20230001` … `20230025` (student number) | `Student#2026` | `STUDENT` |
 
 ## 9. Cloud deployment
 _TBD (Stage 7)._
