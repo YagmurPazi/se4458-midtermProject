@@ -14,7 +14,7 @@ A conversational assistant that answers student questions about tuition deadline
 7. [Data model](#7-data-model)
 8. [Running locally](#8-running-locally) _(partly TBD)_
 9. [Cloud deployment](#9-cloud-deployment) _TBD_
-10. [Testing](#10-testing) _TBD_
+10. [Testing](#10-testing) _(agent and MCP tests added in later stages)_
 11. [Demonstration evidence](#11-demonstration-evidence) _TBD_
 12. [Assumptions and design decisions](#12-assumptions-and-design-decisions)
 13. [LLM cost](#13-llm-cost) _TBD_
@@ -164,7 +164,38 @@ Fictitious accounts created by the seed, for local and demo use only.
 _TBD (Stage 7)._
 
 ## 10. Testing
-_TBD._
+
+### Tuition API unit tests (no database, no network)
+```bash
+npm test                      # all workspaces
+npm test -w apps/tuition-api  # API only
+```
+Prisma is replaced by a mock, so these tests need no database, Docker, cloud service or LLM.
+
+| File | What it checks |
+|---|---|
+| [`app.http.spec.ts`](apps/tuition-api/src/app.http.spec.ts) | Every endpoint over HTTP (Supertest) with the real Nest configuration: success and failure for each operation, 401/403 guards, 400 validation (for example more than 2 decimals), the shared error body |
+| [`payments.service.spec.ts`](apps/tuition-api/src/banking/payments.service.spec.ts) | Pay Tuition: partial/full payment, `409 DUPLICATE_TRANSACTION` (with and without the original payment), `422 AMOUNT_EXCEEDS_BALANCE`, `404 TUITION_NOT_FOUND` |
+| [`tuition-query.service.spec.ts`](apps/tuition-api/src/tuition/tuition-query.service.spec.ts) | Query Tuition: overall and per-term balance, term ordering, `STUDENT_NOT_FOUND`, `TUITION_NOT_FOUND` |
+| [`tuition-admin.service.spec.ts`](apps/tuition-api/src/admin/tuition-admin.service.spec.ts) | Add Tuition: `CREATED`, `UPDATED`, `UNCHANGED`, `AMOUNT_BELOW_PAID`, `STUDENT_NOT_FOUND`, retry after a concurrent create |
+| [`tuition-batch.service.spec.ts`](apps/tuition-api/src/admin/tuition-batch.service.spec.ts) | Batch CSV: header check, row-level errors, `DUPLICATE_IN_FILE`, counts and line numbers |
+| [`unpaid-tuition.service.spec.ts`](apps/tuition-api/src/admin/unpaid-tuition.service.spec.ts) | Unpaid list: paging, `PAGE_OUT_OF_RANGE`, empty result with `totalPages: 0` |
+| [`auth.service.spec.ts`](apps/tuition-api/src/auth/auth.service.spec.ts), [`password.spec.ts`](apps/tuition-api/src/auth/password.spec.ts) | Login, token claims, `INVALID_CREDENTIALS`, scrypt hashing |
+
+Result: 9 suites, 100 tests, all passing.
+
+### Tuition API integration tests (PostgreSQL in Docker)
+Some behaviour can only be proved against a real database: the row lock that prevents overpayment, the unique `transactionId` under concurrency, and the SQL sorting and paging of the unpaid list.
+```bash
+docker compose up -d postgres
+export DATABASE_URL=postgresql://tuition:tuition@localhost:5432/tuition?schema=public
+npm run prisma:migrate -w apps/tuition-api
+npm run prisma:seed -w apps/tuition-api
+npm run test:int -w apps/tuition-api
+```
+The tests create their own students (`2099xxxx`) and remove them afterwards; the seeded data is not changed. They log in as the seeded `bank` and `admin` users.
+
+Covered: two or more concurrent payments that together exceed the balance (only the ones that fit succeed, the balance never goes negative), the same `transactionId` sent twice at once (one `201`, one `409`, one row), sorting in both columns and directions with the `studentNo` tie-break, page boundaries and `PAGE_OUT_OF_RANGE`, the Add Tuition upsert statuses including two concurrent creates, and a CSV import. Result: 1 suite, 14 tests, all passing.
 
 ## 11. Demonstration evidence
 _TBD (Stage 8)._
@@ -257,7 +288,18 @@ _TBD (Stage 8)._
 - `search_tuition_policies(query)` returns the top matches with `document`, `documentId`, `section`, `heading` and `text`, following the format suggested in policy §9.
 - The MCP endpoint does not go through the API Gateway, as the assignment specifies. It is protected with a shared API key header.
 
-### 12.12 Deployment
+### 12.12 Errors, validation and edge cases
+These details were fixed while implementing the API; [docs/API.md](docs/API.md) lists them per endpoint.
+- Common error codes: `VALIDATION_ERROR` (400), `UNAUTHORIZED` (401), `FORBIDDEN_ROLE` (403), `NOT_FOUND` (404 unknown route), `INTERNAL_ERROR` (500, no internal details). Unknown fields in a body or query are rejected with `VALIDATION_ERROR`.
+- Protected routes check in this order: token and role, then input validation, then ownership (`FORBIDDEN_STUDENT`), then the database.
+- Payment amounts follow the same limits as tuition amounts: greater than 0, at most 1,000,000, at most 2 decimals.
+- A `409 DUPLICATE_TRANSACTION` response contains the original payment only when it belongs to the same student, so another student's payment is never revealed. A retried request always gets `409`, even if the amount would now exceed the balance.
+- An overall query for a student without any tuition records returns `200` with zero totals and an empty `terms` list.
+- Two concurrent Add Tuition requests for the same new student and term: one creates the record, the other is retried once and reports `UNCHANGED` (or `UPDATED`), instead of failing.
+- Batch CSV: an empty file is `INVALID_CSV_HEADER`; a file that is not valid CSV is `VALIDATION_ERROR`; more than 1,000 data rows is `FILE_TOO_LARGE`. `DUPLICATE_IN_FILE` applies to repeats of the first valid occurrence.
+- For `BANK` and `ADMIN` logins `studentNo` is `null`. `JWT_SECRET` is required; the API does not start without it.
+
+### 12.13 Deployment
 - Cloud: Microsoft Azure. Tuition API, MCP server and Kong run on Azure Container Apps; the database is Azure Database for PostgreSQL Flexible Server (Burstable B1MS).
 - The CLI agent runs on the user's machine and connects to the cloud gateway and MCP URLs.
 - Secrets (JWT secret, database URL, Gemini API key, MCP API key) are supplied as environment variables and are never committed.

@@ -44,7 +44,9 @@ Response `200`:
 
 JWT claims: `sub` (user id), `role`, `studentNo` (students only), `iss` (`tuition-auth`, used by Kong to pick the verification key), `iat`, `exp`.
 
-Errors: `400` validation, `401 INVALID_CREDENTIALS`.
+For `BANK` and `ADMIN` users `studentNo` is `null` and the token carries no `studentNo` claim.
+
+Errors: `400 VALIDATION_ERROR` (missing field, username longer than 64 or password longer than 128 characters), `401 INVALID_CREDENTIALS` (unknown user and wrong password give the same response).
 
 Protected endpoints require `Authorization: Bearer <jwt>`. The token is checked twice: Kong verifies signature and expiry, and the API verifies it again and enforces role and ownership (defense in depth).
 
@@ -79,9 +81,9 @@ Response `200`:
   ]
 }
 ```
-With `?term=2026-FALL`, `scope` is `TERM`, `term` is set and `terms` holds only that term.
+With `?term=2026-FALL`, `scope` is `TERM`, `term` is set and `terms` holds only that term. `terms` is ordered chronologically (year, then SPRING, SUMMER, FALL). A student who exists but has no tuition records gets `200` with all totals `0` and `terms: []` when no `term` is given.
 
-Errors: `400 MISSING_STUDENT_NO` / validation, `404 STUDENT_NOT_FOUND`, `404 TUITION_NOT_FOUND` (term given but no record), `429` from the gateway after the third call of the day.
+Errors: `400 MISSING_STUDENT_NO` (header missing or empty), `400 VALIDATION_ERROR` (header not 8 digits, bad `term`), `404 STUDENT_NOT_FOUND`, `404 TUITION_NOT_FOUND` (term given but no record), `429` from the gateway after the third call of the day.
 
 ---
 
@@ -96,7 +98,7 @@ Errors: `400 MISSING_STUDENT_NO` / validation, `404 STUDENT_NOT_FOUND`, `404 TUI
 
 Query: `term` (optional). Response body is identical to the mobile query.
 
-Errors: `401` missing or invalid token, `403 FORBIDDEN_STUDENT` (student token, different number), `404 STUDENT_NOT_FOUND`, `404 TUITION_NOT_FOUND`.
+Errors: `400 VALIDATION_ERROR` (`studentNo` not 8 digits, bad `term`), `401 UNAUTHORIZED` (missing, invalid or expired token), `403 FORBIDDEN_ROLE` (`ADMIN` token), `403 FORBIDDEN_STUDENT` (student token, different number), `404 STUDENT_NOT_FOUND`, `404 TUITION_NOT_FOUND`.
 
 ### Pay Tuition — `POST /api/v1/banking/payments`
 
@@ -134,10 +136,11 @@ Response `201`:
 ```
 
 Errors:
-- `400` validation (amount ≤ 0, more than 2 decimals, bad term or transactionId format)
+- `400 VALIDATION_ERROR` (amount ≤ 0, above 1,000,000 or with more than 2 decimals, bad studentNo, term or transactionId format)
+- `401 UNAUTHORIZED`, `403 FORBIDDEN_ROLE` (`ADMIN` token)
 - `403 FORBIDDEN_STUDENT`
 - `404 TUITION_NOT_FOUND`
-- `409 DUPLICATE_TRANSACTION`: the transactionId was already used. The body contains the original payment, and no new payment is recorded.
+- `409 DUPLICATE_TRANSACTION`: the transactionId was already used, and no new payment is recorded. If the original payment belongs to the same student, the error body also contains it in a `payment` field (same shape as the `201` body). If it belongs to another student, the field is omitted so no other student's data is revealed. A retried request always gets `409`, even if the amount would now exceed the balance.
 - `422 AMOUNT_EXCEEDS_BALANCE`: the amount is greater than the remaining balance (this includes paying a term that is already fully paid).
 
 Concurrency: the tuition row is locked (`SELECT … FOR UPDATE`) inside a transaction, and `transactionId` has a unique constraint, so two simultaneous requests can neither overpay nor double-record.
@@ -191,7 +194,9 @@ studentNo,term,amount,currency
 Processing rules:
 - The header row must be exactly `studentNo,term,amount,currency`. Otherwise the whole file is rejected with `400 INVALID_CSV_HEADER`.
 - Each row is validated and processed **independently** with the same rules as Add Tuition. Valid rows are saved even if other rows fail.
-- If the same `studentNo` + `term` appears more than once in the file, the first occurrence is processed and later ones fail with `DUPLICATE_IN_FILE`.
+- If the same `studentNo` + `term` appears more than once in the file, the first valid occurrence is processed and later ones fail with `DUPLICATE_IN_FILE`.
+- Row-level error codes: `VALIDATION_ERROR` (wrong column count, bad studentNo, term or amount, currency other than `USD`), `STUDENT_NOT_FOUND`, `AMOUNT_BELOW_PAID`, `DUPLICATE_IN_FILE`.
+- `succeeded` counts rows with status `CREATED`, `UPDATED` or `UNCHANGED`. Empty lines are skipped but still counted in `row` numbers.
 
 Response `200`:
 ```json
@@ -208,7 +213,7 @@ Response `200`:
 ```
 `row` is the line number in the file (the header is line 1).
 
-Errors: `400 MISSING_FILE`, `400 INVALID_CSV_HEADER`, `400 FILE_TOO_LARGE`.
+Errors: `400 MISSING_FILE`, `400 INVALID_CSV_HEADER` (also for an empty file), `400 FILE_TOO_LARGE` (over 1 MB or more than 1,000 data rows), `400 VALIDATION_ERROR` (file is not valid CSV, e.g. an unclosed quote).
 
 ### Unpaid Tuition Status — `GET /api/v1/admin/tuition/unpaid`
 
@@ -249,7 +254,7 @@ Paging boundaries:
 - No unpaid students for the term → `200` with `items: []`, `totalItems: 0`, `totalPages: 0` (only `page=1` is valid).
 - A page beyond the last page is rejected with `400 PAGE_OUT_OF_RANGE`. For example, if all results fit on one page, `page=2` is an error.
 
-Errors: `400` validation, `400 PAGE_OUT_OF_RANGE`.
+Errors: `400 VALIDATION_ERROR` (missing `term`, bad values, unknown query parameters), `400 PAGE_OUT_OF_RANGE`.
 
 ---
 
@@ -265,6 +270,18 @@ Errors raised by the API use one shape:
   "timestamp": "2026-11-17T14:05:00.000Z"
 }
 ```
+
+Common error codes used by every endpoint:
+
+| Status | `error` | When |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | Request body, path or query fails validation, or contains unknown fields. `message` lists the problems, separated by `; `. |
+| 401 | `UNAUTHORIZED` | Missing, invalid or expired token on a protected route |
+| 403 | `FORBIDDEN_ROLE` | Token role is not allowed for the operation |
+| 404 | `NOT_FOUND` | Unknown route |
+| 500 | `INTERNAL_ERROR` | Unexpected server error (no internal details are returned) |
+
+Order of checks on protected routes: token and role (`401`/`403 FORBIDDEN_ROLE`), then validation (`400`), then ownership (`403 FORBIDDEN_STUDENT`), then the database (`404`, `409`, `422`).
 
 Errors raised by the gateway (before the request reaches the API) use Kong's format:
 ```json
