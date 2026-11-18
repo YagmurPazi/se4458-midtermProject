@@ -31,9 +31,13 @@ services:
     build:
       context: .
       dockerfile: apps/mcp-server/Dockerfile
-    env_file: .env
     environment:
       PORT: "3001"
+      # Clients (the agent) must send this value in the x-api-key header.
+      MCP_API_KEY: ${MCP_API_KEY:?set MCP_API_KEY in .env}
+    ports:
+      # Reached directly by the agent; the MCP path does not go through the API gateway.
+      - "3001:3001"
 
   kong:
     # Kong OSS 3.9 with gateway/kong.yml baked in (see gateway/Dockerfile).

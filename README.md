@@ -9,7 +9,7 @@ A conversational assistant that answers student questions about tuition deadline
 2. [Repository layout](#2-repository-layout)
 3. [API](#3-api)
 4. [API Gateway](#4-api-gateway)
-5. [MCP server and indexing](#5-mcp-server-and-indexing) _TBD_
+5. [MCP server and indexing](#5-mcp-server-and-indexing)
 6. [AI Agent](#6-ai-agent) _TBD_
 7. [Data model](#7-data-model)
 8. [Running locally](#8-running-locally) _(partly TBD)_
@@ -131,7 +131,68 @@ All gateway and API error formats are listed in [docs/API.md](docs/API.md#error-
 ```
 
 ## 5. MCP server and indexing
-_TBD (Stage 5)._
+
+A real MCP server built with the official `@modelcontextprotocol/sdk` ([`apps/mcp-server`](apps/mcp-server)). It gives the agent read-only access to the instructor's policy document, [`University_Tuition_Policies.md`](apps/mcp-server/data/University_Tuition_Policies.md). It does not go through the API gateway (as the assignment requires) and has no access to student data.
+
+| | |
+|---|---|
+| Endpoint (local) | `POST http://localhost:3001/mcp` (Streamable HTTP transport) |
+| Endpoint (cloud) | _TBD (Stage 7)_ |
+| Authentication | `x-api-key` header, compared in constant time; otherwise `401` |
+| Health | `GET /health` (public) → `{ "status": "ok", "document": "UNI-TUITION-2026-01", "chunks": 25 }` |
+| Local stdio mode | `npm run start:stdio -w apps/mcp-server` (for MCP clients that start the server themselves) |
+
+The HTTP server is **stateless**: each request gets a fresh MCP server and transport bound to the shared, read-only index, so any number of replicas can answer any request.
+
+### Tool: `search_tuition_policies`
+Input schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What to look for, e.g. \"fall payment deadline\"" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Maximum number of passages (default 3)" }
+  },
+  "required": ["query"]
+}
+```
+Output (`structuredContent`, also returned as JSON text), following the format suggested in policy §9:
+```json
+{
+  "document": "University_Tuition_Policies.md",
+  "documentId": "UNI-TUITION-2026-01",
+  "query": "late fee",
+  "matches": [
+    {
+      "section": "4.1",
+      "heading": "Late fee rule",
+      "parentHeading": "Late fees",
+      "text": "A 2% one-time late fee may be assessed on an overdue amount after the applicable due date, unless an approved exception applies. ...",
+      "score": 85.17
+    }
+  ]
+}
+```
+The tool is annotated as read-only. Invalid input (empty query, limit above 5) is returned as a tool error. If nothing matches, `matches` is empty, so the agent can say the policy does not cover the question instead of guessing.
+
+### Chunking and indexing
+1. **Chunking** ([`policy-chunks.ts`](apps/mcp-server/src/policy-chunks.ts)): the Markdown is split by headings into one chunk per `###` subsection (for example §3.2), or per `##` section when it has no subsections (§1, §9). Each chunk keeps its section number, heading, parent heading and plain text (Markdown emphasis removed). The title block is skipped and the document ID is read from it. The document gives **25 chunks**.
+2. **Indexing** ([`policy-index.ts`](apps/mcp-server/src/policy-index.ts)): full-text **BM25** search with MiniSearch over the heading, parent heading and text. Headings are boosted (×3, parent ×1.5), common English stop words are ignored, and prefix and fuzzy matching (edit distance 20% of the term length) handle word forms and small typos such as "instalment".
+3. **Build time, not per question** ([`build-index.ts`](apps/mcp-server/src/build-index.ts)): `npm run build` chunks the document and writes the serialized index to `dist/policy-index.json`; the Docker image builds it during `docker build`. The server only loads this file when it starts.
+
+Why full-text search and not embeddings: the document is small and uses the same vocabulary as the questions (deadline, installment, refund, late fee). BM25 is free, needs no external model or API key, and gives deterministic results that unit tests can check. The agent writes the search query itself in English keywords, which also covers questions asked in Turkish.
+
+### Retrieval tests and evidence
+- [`policy-index.spec.ts`](apps/mcp-server/src/policy-index.spec.ts) checks five distinct topics, each must rank the correct section first: Spring deadline → §2.2, installment eligibility → §3.1, late fee → §4.1, early withdrawal refund → §6.1, duplicate payment → §7.4. It also checks score order, the limit, typo tolerance, empty results and that the index gives identical results after the build-time JSON round trip.
+- [`policy-chunks.spec.ts`](apps/mcp-server/src/policy-chunks.spec.ts) checks the 25 chunks and their section numbers, headings and parents.
+- [`http-app.spec.ts`](apps/mcp-server/src/http-app.spec.ts) runs the server on localhost and uses the official MCP client: `tools/list`, `tools/call`, invalid arguments, wrong or missing API key (`401`), health and `405` for `GET /mcp`.
+- Three queries against the running container with the MCP client (`npm run demo -w apps/mcp-server`): [docs/evidence/mcp-queries.txt](docs/evidence/mcp-queries.txt).
+
+| Query | Top sections returned |
+|---|---|
+| `fall tuition payment deadline` | §8.1 (FAQ: Fall deadline), §2.1 Fall term |
+| `installment eligibility and number of installments` | §3.2 Number and size of installments, §3.1 Eligibility |
+| `refund after withdrawal from the term` | §6.1 Early withdrawal, §6.2 Later withdrawal |
 
 ## 6. AI Agent
 _TBD (Stage 6)._
@@ -203,16 +264,16 @@ The seed ([`src/seed/seed-data.ts`](apps/tuition-api/src/seed/seed-data.ts)) is 
 
 ## 8. Running locally
 
-_The MCP server and the agent are added in later stages._
+_The agent is added in a later stage._
 
-### Full stack with Docker Compose (PostgreSQL, Tuition API, Kong)
+### Full stack with Docker Compose (PostgreSQL, Tuition API, Kong, MCP server)
 ```bash
-cp .env.example .env              # set JWT_SECRET to a long random value
-docker compose up -d --build postgres tuition-api kong
+cp .env.example .env              # set JWT_SECRET and MCP_API_KEY to long random values
+docker compose up -d --build
 docker compose exec tuition-api node dist/seed/seed.js
 ./gateway/smoke-test.sh
 ```
-The API container applies the database migrations when it starts. The seed can be run any number of times. The gateway listens on `http://localhost:8000`, Swagger UI is at `http://localhost:8000/api/docs`.
+The API container applies the database migrations when it starts. The seed can be run any number of times. The gateway listens on `http://localhost:8000`, Swagger UI is at `http://localhost:8000/api/docs`, and the MCP server on `http://localhost:3001/mcp`.
 
 ### API without Docker (development)
 ```bash
