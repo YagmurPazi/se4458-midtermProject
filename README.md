@@ -10,11 +10,11 @@ A conversational assistant that answers student questions about tuition deadline
 3. [API](#3-api)
 4. [API Gateway](#4-api-gateway)
 5. [MCP server and indexing](#5-mcp-server-and-indexing)
-6. [AI Agent](#6-ai-agent) _TBD_
+6. [AI Agent](#6-ai-agent)
 7. [Data model](#7-data-model)
 8. [Running locally](#8-running-locally) _(partly TBD)_
 9. [Cloud deployment](#9-cloud-deployment) _TBD_
-10. [Testing](#10-testing) _(agent and MCP tests added in later stages)_
+10. [Testing](#10-testing)
 11. [Demonstration evidence](#11-demonstration-evidence) _TBD_
 12. [Assumptions and design decisions](#12-assumptions-and-design-decisions)
 13. [LLM cost](#13-llm-cost) _TBD_
@@ -195,7 +195,75 @@ Why full-text search and not embeddings: the document is small and uses the same
 | `refund after withdrawal from the term` | §6.1 Early withdrawal, §6.2 Later withdrawal |
 
 ## 6. AI Agent
-_TBD (Stage 6)._
+
+A command-line chat agent ([`apps/agent`](apps/agent)) that uses **Google Gemini with real function calling**. Gemini decides which tools to use; the agent runs every tool itself and sends the results back to Gemini, which writes the final answer. There is no keyword routing, and the LLM never calls a backend.
+
+```
+Student ──► CLI ──► Agent loop ──► Gemini (function calling)
+                      │   ▲            │ "call get_my_tuition {term}"
+                      │   └────────────┘ results sent back as function responses
+                      ├─► search_tuition_policies ──► MCP client ──HTTP──► MCP server
+                      ├─► get_my_tuition ───────────► Kong ──► Tuition API (JWT of the student)
+                      └─► pay_my_tuition ──► confirmation gate (code) ──► Kong ──► Tuition API
+```
+
+### Run
+```bash
+npm run build -w apps/agent
+npm run start -w apps/agent        # asks for student number and password
+```
+Configuration (from `.env`): `GATEWAY_URL`, `MCP_URL`, `MCP_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`) and optionally `AGENT_TRACE_FILE` (default `logs/agent-trace.jsonl`). For scripted demos the login can be given as `AGENT_USERNAME` / `AGENT_PASSWORD`.
+
+### Tools given to Gemini
+| Tool | Parameters | Executed by the agent as |
+|---|---|---|
+| `search_tuition_policies` | `query` (English keywords), `limit?` | MCP `tools/call` on the MCP server (§5) |
+| `get_my_tuition` | `term?` | `GET /api/v1/banking/tuition/{studentNo}` through Kong |
+| `pay_my_tuition` | `term`, `amount` | Nothing at first: starts the confirmation gate (below) |
+
+### Identity: the agent cannot reach another student's data
+- The student logs in when the chat starts (`POST /api/v1/auth/login` through Kong). The agent keeps the JWT in memory; only `STUDENT` accounts are accepted.
+- **No tool has a student-number parameter.** The number always comes from the login, and every REST call carries the student's own token. If a prompt says "show student 20230002", or the model invents a `studentNo` argument, the agent still queries only the logged-in student. The API would also reject another number with `403 FORBIDDEN_STUDENT`.
+
+### Payment confirmation is enforced in code
+1. When Gemini calls `pay_my_tuition`, the agent validates the term and the amount (positive, at most 2 decimals) and reads the live balance. An amount above the balance is rejected at once.
+2. The agent does **not** call the payment API. It shows a fixed summary (policy §7.3) and ends the turn:
+   ```
+   Please confirm this payment / Lütfen bu ödemeyi onaylayın:
+     Student:         20230001 (logged-in user)
+     Term:            2026-FALL
+     Amount:          500.00 USD
+     Current balance: 1,500.00 USD (after payment: 1,000.00 USD)
+   Reply "yes" or "confirm" ("evet" / "onaylıyorum") to submit it. Any other reply cancels it.
+   ```
+3. The user's **next** message decides, in code and before Gemini sees it: only an exact confirmation (`yes`, `confirm`, `I confirm`, `evet`, `onaylıyorum`, …) submits the payment, with a new UUID as `transactionId` (the idempotency key, policy §7.4). Any other reply, such as "Can I pay $500?", cancels it.
+4. Gemini receives the real API result and the system prompt tells it to report success only if the result says `SUCCESS`.
+
+### System prompt
+[`system-prompt.ts`](apps/agent/src/system-prompt.ts): answer in the user's language; use the policy tool for every rule question and write its query in English keywords (the index is English); use the balance tool for anything about the student's account and never invent amounts; cite policy sections such as "(§3.2)"; never confirm an installment plan or a scholarship and never add late fees; send refund decisions to the finance office.
+
+### Tool trace
+Every turn prints a compact trace and appends the full trace as one JSON line to `logs/agent-trace.jsonl`: the user message, each tool with its input, result, success flag and duration, the confirmation-gate decision and the final answer.
+```
+  ┌─ tool trace
+  │ ✔ get_my_tuition {} (31 ms)
+  │   → {"result":{"studentNo":"20230001","scope":"OVERALL",…,"balance":4500,…}}
+  │ ✔ search_tuition_policies {"query":"installment eligibility"} (18 ms)
+  │   → {"result":{"document":"University_Tuition_Policies.md",…,"matches":[{"section":"3.1",…}]}}
+  └─ trace saved to logs/agent-trace.jsonl
+```
+
+### Tests (no LLM, no network)
+[`agent.spec.ts`](apps/agent/src/agent.spec.ts) replaces Gemini with a scripted fake LLM and fakes the REST and MCP clients:
+- MCP-only, REST-only and MCP + REST turns (two tools in one model response), and a direct answer without tools;
+- the logged-in student is used even when the prompt or the model names another student; API errors such as `403` are passed back to the model;
+- the confirmation gate: a payment request only shows the summary; `yes` sends exactly one payment with a new `transactionId`; `evet` works; any other reply cancels; a later `yes` does not revive a cancelled payment; amounts above the balance and invalid arguments never reach the confirmation; a failed payment (`409`) is reported;
+- the tool-call loop stops after the configured number of rounds;
+- which replies count as a confirmation.
+
+[`tuition-api.spec.ts`](apps/agent/src/tuition-api.spec.ts) checks the REST client with a mocked `fetch`: gateway URLs, bearer token, own student number, non-student login refused, API and Kong error mapping.
+
+Live runs with Gemini for the three required scenarios (MCP only, REST only, MCP + REST) and a confirmed payment are in section 11.
 
 ## 7. Data model
 
@@ -264,8 +332,6 @@ The seed ([`src/seed/seed-data.ts`](apps/tuition-api/src/seed/seed-data.ts)) is 
 
 ## 8. Running locally
 
-_The agent is added in a later stage._
-
 ### Full stack with Docker Compose (PostgreSQL, Tuition API, Kong, MCP server)
 ```bash
 cp .env.example .env              # set JWT_SECRET and MCP_API_KEY to long random values
@@ -318,6 +384,13 @@ Prisma is replaced by a mock, so these tests need no database, Docker, cloud ser
 | [`auth.service.spec.ts`](apps/tuition-api/src/auth/auth.service.spec.ts), [`password.spec.ts`](apps/tuition-api/src/auth/password.spec.ts) | Login, token claims, `INVALID_CREDENTIALS`, scrypt hashing |
 
 Result: 9 suites, 100 tests, all passing.
+
+### MCP server and agent tests (no network, no LLM)
+```bash
+npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see §5)
+npm test -w apps/agent        # 2 suites, 40 tests: fake-LLM agent scenarios and confirmation gate (see §6)
+```
+`npm test` at the repository root runs all three workspaces (163 tests).
 
 ### Tuition API integration tests (PostgreSQL in Docker)
 Some behaviour can only be proved against a real database: the row lock that prevents overpayment, the unique `transactionId` under concurrency, and the SQL sorting and paging of the unpaid list.

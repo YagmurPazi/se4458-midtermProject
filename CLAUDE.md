@@ -51,8 +51,8 @@ The agent executes all tool calls; the LLM never calls backends. The MCP path do
 | 3 | REST API + unit tests (every operation: ≥1 success and ≥1 failure test) | Done |
 | 4 | Kong: versioned routes, JWT on protected routes, per-student rate limit, sample error response | Done |
 | 5 | MCP server: chunking, index, tool, 3 distinct retrieval tests | Done |
-| 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | Next |
-| 7 | Azure deployment scripts in `infra/` (the user runs them in their own account) | |
+| 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | Done (live Gemini run pending the user's API key) |
+| 7 | Azure deployment scripts in `infra/` (the user runs them in their own account) | Next |
 | 8 | Evidence + README: 3 agent scenarios, 3 MCP queries, protected route, confirmed payment, test run, video script | |
 | 9 | Independent review against the checklist (`reviewer` agent) | |
 
@@ -68,6 +68,7 @@ Update this table when a stage finishes.
 - Docker Desktop is installed on the user's Mac, but `~/.docker/bin` may be missing from the shell PATH: use `export PATH="$HOME/.docker/bin:$PATH"`. Local DB: `docker compose up -d postgres`, then `prisma:migrate` and `prisma:seed` (README §8).
 - Seed lives in `apps/tuition-api/src/seed/` (not `prisma/`) so it compiles to `dist/seed/seed.js` and can seed the cloud DB from the container. Password hashing: `src/auth/password.ts` (node:crypto scrypt), reuse it for login in Stage 3.
 - MCP server (Stage 5): stateless Streamable HTTP on `POST /mcp` (port 3001, `x-api-key`), index built by `npm run build` into `dist/policy-index.json`. The search is English keyword BM25: Turkish queries find nothing, so the agent's system prompt must tell Gemini to write `search_tuition_policies` queries in English. Demo/evidence: `npm run demo -w apps/mcp-server` (needs MCP_URL, MCP_API_KEY).
+- Agent (Stage 6): `apps/agent` CLI; LlmClient interface (GeminiClient, scripted fake in tests); tools without studentNo; confirmation gate in `agent.ts` (`isExplicitConfirmation`); trace to console + `logs/agent-trace.jsonl` (gitignored). Login can be scripted with AGENT_USERNAME/AGENT_PASSWORD. The user must put a real GEMINI_API_KEY in `.env` themselves (never in chat or commits).
 - Docker build context is the repo root (`context: .`, `dockerfile: apps/<app>/Dockerfile`).
 
 ## Requirements checklist (condensed from the assignment)
