@@ -9,6 +9,8 @@ export interface AgentConfig {
   mcpApiKey: string;
   geminiApiKey: string;
   geminiModel: string;
+  /** Used when the main model is busy. */
+  geminiFallbackModel: string;
   /** JSON Lines file that receives one tool trace per turn. */
   traceFile: string;
 }
@@ -29,7 +31,8 @@ export function loadConfig(): AgentConfig {
     mcpUrl: process.env.MCP_URL ?? 'http://localhost:3001/mcp',
     mcpApiKey: required('MCP_API_KEY'),
     geminiApiKey: required('GEMINI_API_KEY'),
-    geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+    geminiModel: process.env.GEMINI_MODEL ?? 'gemini-3.8-flash',
+    geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL ?? 'gemini-3.5-flash-lite',
     traceFile: process.env.AGENT_TRACE_FILE ?? resolve(process.cwd(), 'logs', 'agent-trace.jsonl'),
   };
 }

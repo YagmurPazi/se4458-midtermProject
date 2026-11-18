@@ -24,21 +24,46 @@ class MutableStdout extends Writable {
   }
 }
 
-async function login(rl: Interface, output: MutableStdout, api: HttpTuitionApi): Promise<Session> {
+/** Reads answers line by line; lines typed or piped in early are queued, not lost. */
+class LineReader {
+  private readonly lines: AsyncIterator<string>;
+
+  constructor(
+    rl: Interface,
+    private readonly output: MutableStdout,
+  ) {
+    this.lines = rl[Symbol.asyncIterator]();
+  }
+
+  /** Returns the next line, or null when the input has ended. */
+  async ask(prompt: string, hidden = false): Promise<string | null> {
+    process.stdout.write(prompt);
+    this.output.muted = hidden;
+    const { value, done } = await this.lines.next();
+    this.output.muted = false;
+    if (done) {
+      return null;
+    }
+    if (hidden) {
+      process.stdout.write('\n');
+    } else if (!process.stdin.isTTY) {
+      process.stdout.write(`${value}\n`); // show piped input, so saved transcripts read like a chat
+    }
+    return value;
+  }
+}
+
+async function login(reader: LineReader, api: HttpTuitionApi): Promise<Session> {
   const presetUser = process.env.AGENT_USERNAME;
   const presetPassword = process.env.AGENT_PASSWORD;
   for (;;) {
-    const username = presetUser ?? (await rl.question('Student number: ')).trim();
-    let password = presetPassword;
-    if (password === undefined) {
-      process.stdout.write('Password: ');
-      output.muted = true;
-      password = await rl.question('');
-      output.muted = false;
-      process.stdout.write('\n');
+    const username = presetUser ?? (await reader.ask('Student number: '));
+    const password = presetPassword ?? (username === null ? null : await reader.ask('Password: ', true));
+    if (username === null || password === null) {
+      throw new Error('Input ended before login');
     }
     try {
-      return await api.login(username, password);
+      return await api.login(username.trim(), password);
     } catch (error) {
       const message = error instanceof ApiError ? `${error.code}: ${error.message}` : String(error);
       console.log(`Login failed (${message})`);
@@ -58,13 +83,22 @@ async function main(): Promise<void> {
   const policy = new McpPolicySearch(config.mcpUrl, config.mcpApiKey);
 
   console.log('AI Tuition Assistant');
-  console.log(`Gateway: ${config.gatewayUrl} | MCP: ${config.mcpUrl} | Model: ${config.geminiModel}\n`);
-  const session = await login(rl, output, api);
+  console.log(
+    `Gateway: ${config.gatewayUrl} | MCP: ${config.mcpUrl} | Model: ${config.geminiModel} (fallback ${config.geminiFallbackModel})\n`,
+  );
+  const reader = new LineReader(rl, output);
+  const session = await login(reader, api);
   console.log(`Logged in as student ${session.studentNo}. Type your question, or "exit" to quit.\n`);
 
   const today = new Date().toISOString().slice(0, 10);
   const agent = new TuitionAgent({
-    llm: new GeminiClient(config.geminiApiKey, config.geminiModel, buildSystemPrompt(session.studentNo, today), TOOL_DECLARATIONS),
+    llm: new GeminiClient({
+      apiKey: config.geminiApiKey,
+      model: config.geminiModel,
+      fallbackModel: config.geminiFallbackModel,
+      systemInstruction: buildSystemPrompt(session.studentNo, today),
+      tools: TOOL_DECLARATIONS,
+    }),
     api,
     policy,
     session,
@@ -73,12 +107,11 @@ async function main(): Promise<void> {
 
   try {
     for (;;) {
-      let question: string;
-      try {
-        question = (await rl.question('You: ')).trim();
-      } catch {
+      const line = await reader.ask('You: ');
+      if (line === null) {
         break; // input closed (Ctrl+D or end of piped input)
       }
+      const question = line.trim();
       if (!question) {
         continue;
       }

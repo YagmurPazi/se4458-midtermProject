@@ -131,8 +131,18 @@ export class TuitionAgent {
       }
     }
 
+    const historyLength = this.history.length;
     this.history.push({ role: 'user', parts });
-    const text = await this.runModel(steps);
+    let text: string;
+    try {
+      text = await this.runModel(steps);
+    } catch (error) {
+      // For example the LLM is unavailable: drop this turn so the conversation history stays valid.
+      // A payment confirmed above has already been sent and is not affected.
+      this.history.length = historyLength;
+      this.pending = null;
+      throw error;
+    }
     if (this.pending) {
       const { term, amount, currentBalance } = this.pending;
       confirmation = { decision: 'REQUESTED', term, amount, currentBalance };

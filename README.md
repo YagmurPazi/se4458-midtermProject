@@ -212,7 +212,7 @@ Student ──► CLI ──► Agent loop ──► Gemini (function calling)
 npm run build -w apps/agent
 npm run start -w apps/agent        # asks for student number and password
 ```
-Configuration (from `.env`): `GATEWAY_URL`, `MCP_URL`, `MCP_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`) and optionally `AGENT_TRACE_FILE` (default `logs/agent-trace.jsonl`). For scripted demos the login can be given as `AGENT_USERNAME` / `AGENT_PASSWORD`.
+Configuration (from `.env`): `GATEWAY_URL`, `MCP_URL`, `MCP_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`), `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`, used when the main model answers "busy": each model is tried twice, requests time out after 60 s) and optionally `AGENT_TRACE_FILE` (default `logs/agent-trace.jsonl`). For scripted demos the login can be given as `AGENT_USERNAME` / `AGENT_PASSWORD`.
 
 ### Tools given to Gemini
 | Tool | Parameters | Executed by the agent as |
@@ -258,8 +258,10 @@ Every turn prints a compact trace and appends the full trace as one JSON line to
 - MCP-only, REST-only and MCP + REST turns (two tools in one model response), and a direct answer without tools;
 - the logged-in student is used even when the prompt or the model names another student; API errors such as `403` are passed back to the model;
 - the confirmation gate: a payment request only shows the summary; `yes` sends exactly one payment with a new `transactionId`; `evet` works; any other reply cancels; a later `yes` does not revive a cancelled payment; amounts above the balance and invalid arguments never reach the confirmation; a failed payment (`409`) is reported;
-- the tool-call loop stops after the configured number of rounds;
+- the tool-call loop stops after the configured number of rounds, and a turn that fails (LLM unavailable) is dropped so the conversation stays valid;
 - which replies count as a confirmation.
+
+[`llm.spec.ts`](apps/agent/src/llm.spec.ts) checks the Gemini client with the SDK call mocked: automatic function calling off, retry of temporary errors, switch to the fallback model and skipping a busy model, no retry of permanent errors.
 
 [`tuition-api.spec.ts`](apps/agent/src/tuition-api.spec.ts) checks the REST client with a mocked `fetch`: gateway URLs, bearer token, own student number, non-student login refused, API and Kong error mapping.
 
@@ -433,9 +435,9 @@ Result: 9 suites, 100 tests, all passing.
 ### MCP server and agent tests (no network, no LLM)
 ```bash
 npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see §5)
-npm test -w apps/agent        # 2 suites, 40 tests: fake-LLM agent scenarios and confirmation gate (see §6)
+npm test -w apps/agent        # 3 suites, 48 tests: fake-LLM agent scenarios, confirmation gate, Gemini client (see §6)
 ```
-`npm test` at the repository root runs all three workspaces (163 tests).
+`npm test` at the repository root runs all three workspaces (171 tests).
 
 ### Tuition API integration tests (PostgreSQL in Docker)
 Some behaviour can only be proved against a real database: the row lock that prevents overpayment, the unique `transactionId` under concurrency, and the SQL sorting and paging of the unpaid list.

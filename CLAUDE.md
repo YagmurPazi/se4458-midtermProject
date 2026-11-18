@@ -29,7 +29,7 @@ The agent executes all tool calls; the LLM never calls backends. The MCP path do
 - npm workspaces monorepo, TypeScript (strict), Node ≥ 20 (user has v26).
 - `apps/tuition-api`: NestJS 11, Prisma 6 + PostgreSQL 16, @nestjs/swagger (Swagger UI at `/api/docs`), JWT (HS256) via @nestjs/jwt + passport-jwt, Jest + Supertest.
 - `apps/mcp-server`: @modelcontextprotocol/sdk, MiniSearch (BM25), Streamable HTTP transport (stdio also), protected by an `x-api-key` header.
-- `apps/agent`: plain TypeScript CLI, @google/genai (Gemini Flash, free tier), MCP SDK client.
+- `apps/agent`: plain TypeScript CLI, @google/genai (Gemini, free tier: `gemini-3.8-flash`, fallback `gemini-3.5-flash-lite`), MCP SDK client.
 - `gateway/kong.yml`: Kong OSS 3.x, DB-less.
 - Local: `docker-compose.yml` (postgres, tuition-api, mcp-server, kong). Cloud: Azure Container Apps + Azure Database for PostgreSQL Flexible Server (B1MS, free 12 months; the user's Azure for Students account is new).
 
@@ -51,7 +51,7 @@ The agent executes all tool calls; the LLM never calls backends. The MCP path do
 | 3 | REST API + unit tests (every operation: ≥1 success and ≥1 failure test) | Done |
 | 4 | Kong: versioned routes, JWT on protected routes, per-student rate limit, sample error response | Done |
 | 5 | MCP server: chunking, index, tool, 3 distinct retrieval tests | Done |
-| 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | Done (live Gemini run pending the user's API key) |
+| 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | Done (verified live with Gemini) |
 | 7 | Azure deployment scripts in `infra/` (the user runs them in their own account) | Scripts done; waiting for the user to run `infra/deploy.sh` |
 | 8 | Evidence + README: 3 agent scenarios, 3 MCP queries, protected route, confirmed payment, test run, video script | |
 | 9 | Independent review against the checklist (`reviewer` agent) | |
@@ -68,7 +68,7 @@ Update this table when a stage finishes.
 - Docker Desktop is installed on the user's Mac, but `~/.docker/bin` may be missing from the shell PATH: use `export PATH="$HOME/.docker/bin:$PATH"`. Local DB: `docker compose up -d postgres`, then `prisma:migrate` and `prisma:seed` (README §8).
 - Seed lives in `apps/tuition-api/src/seed/` (not `prisma/`) so it compiles to `dist/seed/seed.js` and can seed the cloud DB from the container. Password hashing: `src/auth/password.ts` (node:crypto scrypt), reuse it for login in Stage 3.
 - MCP server (Stage 5): stateless Streamable HTTP on `POST /mcp` (port 3001, `x-api-key`), index built by `npm run build` into `dist/policy-index.json`. The search is English keyword BM25: Turkish queries find nothing, so the agent's system prompt must tell Gemini to write `search_tuition_policies` queries in English. Demo/evidence: `npm run demo -w apps/mcp-server` (needs MCP_URL, MCP_API_KEY).
-- Agent (Stage 6): `apps/agent` CLI; LlmClient interface (GeminiClient, scripted fake in tests); tools without studentNo; confirmation gate in `agent.ts` (`isExplicitConfirmation`); trace to console + `logs/agent-trace.jsonl` (gitignored). Login can be scripted with AGENT_USERNAME/AGENT_PASSWORD. The user must put a real GEMINI_API_KEY in `.env` themselves (never in chat or commits).
+- Agent (Stage 6): `apps/agent` CLI; LlmClient interface (GeminiClient, scripted fake in tests); tools without studentNo; confirmation gate in `agent.ts` (`isExplicitConfirmation`); trace to console + `logs/agent-trace.jsonl` (gitignored). Login can be scripted with AGENT_USERNAME/AGENT_PASSWORD; piped input is queued (`LineReader`), so `node apps/agent/dist/index.js < questions.txt` gives a full transcript. GEMINI_API_KEY is in `.env` (the user once pasted it into `.env.example` by mistake: always check `git diff .env.example` before committing). `gemini-2.5-flash` is closed to new users; `gemini-3.8-flash` often answers 503/504 on the free tier, so GeminiClient retries twice, then uses GEMINI_FALLBACK_MODEL and skips a busy model for 5 minutes. Live run verified: MCP-only, REST-only, MCP+REST, other student refused, confirmed payment, Turkish question.
 - Azure (Stage 7): `infra/deploy.sh` (idempotent az CLI; ACR build in the cloud, PG Flexible B1ms, Container Apps: tuition-api internal, tuition-gateway 1 replica, tuition-mcp, job tuition-seed running `npm run db:setup`). Gitignored local files: `infra/config.env`, `infra/.deploy-state.env` (generated secrets), `infra/cloud.env` (URLs + MCP key for agent/tests). Kong upstream comes from `UPSTREAM_URL` (rendered by `gateway/render-config.sh`; Azure uses `https://<api internal fqdn>`). `infra/destroy.sh` deletes the resource group. Never commit the state files.
 - Docker build context is the repo root (`context: .`, `dockerfile: apps/<app>/Dockerfile`).
 

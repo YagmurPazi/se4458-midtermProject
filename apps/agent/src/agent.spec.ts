@@ -278,6 +278,18 @@ describe('TuitionAgent', () => {
     });
   });
 
+  it('drops a failed turn (LLM unavailable) so the next turn starts from a valid history', async () => {
+    const failing: Step = () => {
+      throw new Error('LLM unavailable');
+    };
+    const { agent, llm } = setup([failing, say('Hello again.')]);
+
+    await expect(agent.handle('first')).rejects.toThrow('LLM unavailable');
+    await agent.handle('second');
+
+    expect(llm.requests[1]).toEqual([{ role: 'user', parts: [{ text: 'second' }] }]);
+  });
+
   it('stops a tool-calling loop after the configured number of rounds', async () => {
     const search = callTools(['search_tuition_policies', { query: 'x' }]);
     const { agent, llm, policy } = setup([search, search, search], 2);
