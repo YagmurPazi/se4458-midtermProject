@@ -1,12 +1,125 @@
 _format_version: "3.0"
 
-# Stage 0 skeleton: only the health route is exposed.
-# More routes (auth, tuition, payments, admin, ...) come in Stage 4.
+# Kong Gateway (OSS 3.x, DB-less) in front of the Tuition API.
+# Every REST operation is routed here; clients never call the API directly.
+# Route paths keep their version prefix (/api/v1) and are passed to the API unchanged (strip_path: false).
+# Documentation: README §4 and docs/API.md.
+
 services:
   - name: tuition-api
     url: http://tuition-api:3000
+    plugins:
+      # Gateway default for every route of the service: 120 requests per minute per client IP.
+      # A route-level rate-limiting plugin (mobile query below) replaces this default for that route.
+      - name: rate-limiting
+        config:
+          minute: 120
+          limit_by: ip
+          policy: local
     routes:
+      # ---- Public routes -------------------------------------------------------------------
       - name: health
-        paths:
-          - /api/v1/health
+        methods: [GET]
+        paths: ["~/api/v1/health$"]
         strip_path: false
+
+      - name: swagger-docs
+        # Swagger UI (/api/docs, /api/docs/*) and the OpenAPI JSON (/api/docs-json).
+        methods: [GET]
+        paths: [/api/docs]
+        strip_path: false
+
+      - name: auth-login
+        methods: [POST]
+        paths: ["~/api/v1/auth/login$"]
+        strip_path: false
+
+      - name: mobile-query-tuition
+        # No authentication (as specified); limited to 3 calls per student per day.
+        methods: [GET]
+        paths: ["~/api/v1/mobile/tuition$"]
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config:
+              day: 3
+              limit_by: header
+              header_name: X-Student-No
+              policy: local
+
+      # ---- Protected routes (JWT verified here and again in the API) ------------------------
+      - name: banking-query-tuition
+        methods: [GET]
+        paths: ["~/api/v1/banking/tuition/[^/]+$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config:
+              key_claim_name: iss
+              claims_to_verify: [exp]
+              header_names: [authorization]
+              uri_param_names: []
+              cookie_names: []
+
+      - name: banking-pay-tuition
+        methods: [POST]
+        paths: ["~/api/v1/banking/payments$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config:
+              key_claim_name: iss
+              claims_to_verify: [exp]
+              header_names: [authorization]
+              uri_param_names: []
+              cookie_names: []
+
+      - name: admin-add-tuition
+        methods: [POST]
+        paths: ["~/api/v1/admin/tuition$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config:
+              key_claim_name: iss
+              claims_to_verify: [exp]
+              header_names: [authorization]
+              uri_param_names: []
+              cookie_names: []
+
+      - name: admin-add-tuition-batch
+        methods: [POST]
+        paths: ["~/api/v1/admin/tuition/batch$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config:
+              key_claim_name: iss
+              claims_to_verify: [exp]
+              header_names: [authorization]
+              uri_param_names: []
+              cookie_names: []
+
+      - name: admin-unpaid-tuition
+        methods: [GET]
+        paths: ["~/api/v1/admin/tuition/unpaid$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config:
+              key_claim_name: iss
+              claims_to_verify: [exp]
+              header_names: [authorization]
+              uri_param_names: []
+              cookie_names: []
+
+# One consumer represents the token issuer (the API's login endpoint). Kong selects its credential by the
+# token's `iss` claim (`tuition-auth`) and verifies the HS256 signature with the shared secret.
+# The secret is NOT stored here. render-config.sh replaces the placeholder with the JWT_SECRET environment
+# variable when the container starts (Kong OSS cannot read this field from a vault reference).
+consumers:
+  - username: tuition-auth-issuer
+    jwt_secrets:
+      - key: tuition-auth
+        algorithm: HS256
+        secret: '__JWT_SECRET__'

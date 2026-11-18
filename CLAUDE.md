@@ -49,8 +49,8 @@ The agent executes all tool calls; the LLM never calls backends. The MCP path do
 | 1 | API contract (`docs/API.md`) + assumptions (README §12) | Done |
 | 2 | Prisma schema, migration, seed data, ER diagram (Mermaid in `docs/`) | Done |
 | 3 | REST API + unit tests (every operation: ≥1 success and ≥1 failure test) | Done |
-| 4 | Kong: versioned routes, JWT on protected routes, per-student rate limit, sample error response | Next |
-| 5 | MCP server: chunking, index, tool, 3 distinct retrieval tests | |
+| 4 | Kong: versioned routes, JWT on protected routes, per-student rate limit, sample error response | Done |
+| 5 | MCP server: chunking, index, tool, 3 distinct retrieval tests | Next |
 | 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | |
 | 7 | Azure deployment scripts in `infra/` (the user runs them in their own account) | |
 | 8 | Evidence + README: 3 agent scenarios, 3 MCP queries, protected route, confirmed payment, test run, video script | |
@@ -60,7 +60,9 @@ Update this table when a stage finishes.
 
 ## Known issues / notes
 - npm audit (reviewed in Stage 3): `deepmerge-ts` comes only from the Prisma CLI (dev tool); the fix needs deepmerge-ts 8 and `npm audit fix` downgrades Prisma CLI to 6.12 (mismatch with client 6.19.3), so it is accepted. `zod` comes from the MCP SDK (agent, mcp-server): handle in Stage 5. Never run `npm audit fix` blindly.
-- Stage 7: the tuition-api runtime Docker stage runs `npx prisma generate` after `npm ci --omit=dev`, but `prisma` is a devDependency; fix this before deploying.
+- Stage 4: `prisma` is now a runtime dependency; the API container runs `prisma migrate deploy` before starting. Seed in a container: `node dist/seed/seed.js`.
+- Kong runs from its own image (`gateway/Dockerfile`, kong.yml baked in). Kong OSS cannot resolve `{vault://env/...}` in `jwt_secrets.secret` (tested: it used the literal string), so `gateway/render-config.sh` writes `JWT_SECRET` into the config at container start. Kong and the API must get the same `JWT_SECRET`.
+- Gateway smoke test: `./gateway/smoke-test.sh [url]` (mobile limit counters live in Kong memory; restart Kong or use other students to rerun the same day). Evidence in `docs/evidence/`.
 - Integration tests: `npm run test:int -w apps/tuition-api` (needs Docker Postgres, migrated + seeded; README §10). `JWT_SECRET` is required at startup.
 - Stage 2 restored `prisma generate` in the `tuition-api` build script. Prisma 6 warns that `package.json#prisma` (seed config) is deprecated for Prisma 7; fine while on Prisma 6.
 - Docker Desktop is installed on the user's Mac, but `~/.docker/bin` may be missing from the shell PATH: use `export PATH="$HOME/.docker/bin:$PATH"`. Local DB: `docker compose up -d postgres`, then `prisma:migrate` and `prisma:seed` (README §8).

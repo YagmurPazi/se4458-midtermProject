@@ -285,10 +285,13 @@ Order of checks on protected routes: token and role (`401`/`403 FORBIDDEN_ROLE`)
 
 Errors raised by the gateway (before the request reaches the API) use Kong's format:
 ```json
-{ "message": "Unauthorized" }                 // 401 – missing or invalid JWT
-{ "message": "API rate limit exceeded" }      // 429 – fourth mobile query of the day
+{ "message": "Unauthorized" }                                          // 401 – no JWT
+{ "message": "Invalid signature" }                                     // 401 – JWT signed with another key or altered
+{ "exp": "token expired" }                                             // 401 – JWT past its exp claim
+{ "message": "API rate limit exceeded", "request_id": "82429669..." }  // 429 – fourth mobile query of the day
+{ "message": "no Route matched with those values", "request_id": "…" } // 404 – unknown path, version or method
 ```
-Rate-limited responses also carry `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` and `Retry-After` headers.
+Rate-limited responses also carry `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` and `Retry-After` headers. Every route also has a gateway default of 120 requests per minute per client IP; the mobile route uses its own daily limit instead.
 
 ## Health
 

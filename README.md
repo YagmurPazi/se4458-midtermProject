@@ -8,7 +8,7 @@ A conversational assistant that answers student questions about tuition deadline
 1. [Architecture](#1-architecture)
 2. [Repository layout](#2-repository-layout)
 3. [API](#3-api)
-4. [API Gateway](#4-api-gateway) _TBD_
+4. [API Gateway](#4-api-gateway)
 5. [MCP server and indexing](#5-mcp-server-and-indexing) _TBD_
 6. [AI Agent](#6-ai-agent) _TBD_
 7. [Data model](#7-data-model)
@@ -62,7 +62,73 @@ The full contract, with request and response examples and every error code, is i
 | Admin | Unpaid Tuition Status | `GET /api/v1/admin/tuition/unpaid` | Yes | Yes |
 
 ## 4. API Gateway
-_TBD (Stage 4)._
+
+Kong Gateway OSS 3.9 in DB-less mode. Every REST operation, including the AI Agent's calls, goes through Kong; the API itself is not published (in Docker Compose it has no host port).
+
+| | |
+|---|---|
+| Gateway URL (local) | `http://localhost:8000` |
+| Gateway URL (cloud) | _TBD (Stage 7)_ |
+| Configuration | [`gateway/kong.yml`](gateway/kong.yml), image [`gateway/Dockerfile`](gateway/Dockerfile) |
+| Upstream | Tuition API service `http://tuition-api:3000` |
+
+### Route mappings
+Paths are versioned (`/api/v1`) and forwarded unchanged (`strip_path: false`). Each route accepts only its own HTTP method; any other path, version or method gets Kong's `404`.
+
+| Kong route | Method and path | Plugins | Auth |
+|---|---|---|---|
+| `health` | `GET /api/v1/health` | default limit | — |
+| `swagger-docs` | `GET /api/docs`, `/api/docs-json` | default limit | — |
+| `auth-login` | `POST /api/v1/auth/login` | default limit | — |
+| `mobile-query-tuition` | `GET /api/v1/mobile/tuition` | `rate-limiting`: 3 per day by `X-Student-No` | — |
+| `banking-query-tuition` | `GET /api/v1/banking/tuition/{studentNo}` | `jwt`, default limit | JWT |
+| `banking-pay-tuition` | `POST /api/v1/banking/payments` | `jwt`, default limit | JWT |
+| `admin-add-tuition` | `POST /api/v1/admin/tuition` | `jwt`, default limit | JWT |
+| `admin-add-tuition-batch` | `POST /api/v1/admin/tuition/batch` | `jwt`, default limit | JWT |
+| `admin-unpaid-tuition` | `GET /api/v1/admin/tuition/unpaid` | `jwt`, default limit | JWT |
+
+"Default limit" is a service-level `rate-limiting` plugin: 120 requests per minute per client IP.
+
+### Authentication at the gateway
+- The `jwt` plugin checks the `Authorization: Bearer` token: HS256 signature and the `exp` claim. Tokens in query strings or cookies are not accepted.
+- Kong picks the verification key by the token's `iss` claim (`tuition-auth`), which matches the credential of the single consumer `tuition-auth-issuer`.
+- The secret is not in the repository. `kong.yml` contains a placeholder that [`gateway/render-config.sh`](gateway/render-config.sh) replaces with the `JWT_SECRET` environment variable when the container starts. (Kong OSS cannot read this field from a vault reference; this was tested.)
+- Kong only proves that the token is genuine and not expired. The API checks the token again and enforces role and ownership (`403 FORBIDDEN_ROLE`, `403 FORBIDDEN_STUDENT`).
+
+### Mobile rate limit
+- `rate-limiting` with `day: 3`, `limit_by: header`, `header_name: X-Student-No`, `policy: local` (see §12.4 for the reasons).
+- Each student number has its own counter, so one student reaching the limit does not affect others. Every call counts, including errors.
+- Without the header, Kong counts by client IP and the API answers `400 MISSING_STUDENT_NO`.
+
+### Sample error responses
+Fourth mobile query of the day for the same student:
+```
+HTTP/1.1 429 Too Many Requests
+RateLimit-Limit: 3
+RateLimit-Remaining: 0
+RateLimit-Reset: 20635
+Retry-After: 20635
+X-RateLimit-Limit-Day: 3
+X-RateLimit-Remaining-Day: 0
+
+{ "message": "API rate limit exceeded", "request_id": "82429669e4737701b7d8f9268e8b7b53" }
+```
+Protected route without a token, and with an altered token:
+```
+HTTP/1.1 401 Unauthorized
+{ "message": "Unauthorized" }
+
+HTTP/1.1 401 Unauthorized
+{ "message": "Invalid signature" }
+```
+All gateway and API error formats are listed in [docs/API.md](docs/API.md#error-format).
+
+### Smoke test
+[`gateway/smoke-test.sh`](gateway/smoke-test.sh) calls every kind of route through the gateway and checks the status codes: public routes, `401` from Kong, `403` from the API, the mobile limit (`200, 200, 200, 429`, while another student still gets `200`) and unrouted paths. It does not change data. Output of a full run: [docs/evidence/gateway-smoke-test.txt](docs/evidence/gateway-smoke-test.txt).
+```bash
+./gateway/smoke-test.sh                       # default http://localhost:8000
+./gateway/smoke-test.sh https://<cloud-gateway>
+```
 
 ## 5. MCP server and indexing
 _TBD (Stage 5)._
@@ -137,19 +203,27 @@ The seed ([`src/seed/seed-data.ts`](apps/tuition-api/src/seed/seed-data.ts)) is 
 
 ## 8. Running locally
 
-_The full guide (API, MCP server, gateway and agent) is completed in later stages._
+_The MCP server and the agent are added in later stages._
 
-### Database
+### Full stack with Docker Compose (PostgreSQL, Tuition API, Kong)
 ```bash
-cp .env.example .env
+cp .env.example .env              # set JWT_SECRET to a long random value
+docker compose up -d --build postgres tuition-api kong
+docker compose exec tuition-api node dist/seed/seed.js
+./gateway/smoke-test.sh
+```
+The API container applies the database migrations when it starts. The seed can be run any number of times. The gateway listens on `http://localhost:8000`, Swagger UI is at `http://localhost:8000/api/docs`.
+
+### API without Docker (development)
+```bash
 docker compose up -d postgres
+export DATABASE_URL=postgresql://tuition:tuition@localhost:5432/tuition?schema=public
+export JWT_SECRET=local-dev-secret
 npm run prisma:migrate -w apps/tuition-api
 npm run prisma:seed -w apps/tuition-api
+npm run build -w apps/tuition-api && node apps/tuition-api/dist/main.js
 ```
-`prisma:migrate` applies the migrations (`prisma migrate deploy`); `prisma:seed` loads the demo data. Both read `DATABASE_URL` from the environment or from `apps/tuition-api/.env`; export it first if needed:
-```bash
-export DATABASE_URL=postgresql://tuition:tuition@localhost:5432/tuition?schema=public
-```
+`prisma:migrate` applies the migrations (`prisma migrate deploy`); `prisma:seed` loads the demo data. This runs the API on port 3000 without the gateway, which is only meant for development.
 
 ### Demo accounts
 Fictitious accounts created by the seed, for local and demo use only.

@@ -24,4 +24,6 @@ WORKDIR /app/apps/tuition-api
 RUN npx prisma generate
 COPY --from=build /app/apps/tuition-api/dist ./dist
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+# Apply pending migrations (idempotent), then start the API.
+# Demo data is loaded on demand: node dist/seed/seed.js
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/main.js"]
