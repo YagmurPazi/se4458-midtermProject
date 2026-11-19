@@ -26,18 +26,25 @@ export interface GeminiOptions {
   sleep?: (ms: number) => Promise<void>;
   warn?: (message: string) => void;
   now?: () => number;
+  /** Which models were busy until when; shared by all clients by default (one per web chat session). */
+  busyUntil?: Map<string, number>;
 }
 
-// Temporary errors: rate limit, overloaded model, timeouts. Each model is tried twice before moving on.
-const TEMPORARY_STATUS = new Set([429, 500, 503, 504]);
+// Temporary errors: rate limit and overloaded model (fast failures, retried once on the same model) and
+// 504 deadline exceeded (slow: the next model is tried at once).
+const RETRY_SAME_MODEL_STATUS = new Set([429, 500, 503]);
+const MOVE_ON_STATUS = new Set([504]);
 const ATTEMPTS_PER_MODEL = 2;
 const RETRY_DELAY_MS = 2000;
+// The SDK passes this to Gemini as the request deadline; an overloaded model answers 504 when it expires.
+const DEFAULT_TIMEOUT_MS = 25_000;
 // A model that stayed busy is skipped for a while, so every question does not wait for it again.
 const BUSY_COOLDOWN_MS = 5 * 60_000;
+const SHARED_BUSY_UNTIL = new Map<string, number>();
 
-function isTemporary(error: unknown): boolean {
+function statusOf(error: unknown): number | undefined {
   const status = (error as { status?: unknown }).status;
-  return typeof status === 'number' && TEMPORARY_STATUS.has(status);
+  return typeof status === 'number' ? status : undefined;
 }
 
 /** Google Gemini with function calling. The SDK's automatic function calling is off: the agent runs every tool. */
@@ -47,15 +54,16 @@ export class GeminiClient implements LlmClient {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly warn: (message: string) => void;
   private readonly now: () => number;
-  private readonly busyUntil = new Map<string, number>();
+  private readonly busyUntil: Map<string, number>;
 
   constructor(private readonly options: GeminiOptions) {
-    this.ai = new GoogleGenAI({ apiKey: options.apiKey, httpOptions: { timeout: options.timeoutMs ?? 60_000 } });
+    this.ai = new GoogleGenAI({ apiKey: options.apiKey, httpOptions: { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS } });
     const { model, fallbackModel } = options;
     this.models = fallbackModel && fallbackModel !== model ? [model, fallbackModel] : [model];
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.warn = options.warn ?? ((message) => console.warn(message));
     this.now = options.now ?? Date.now;
+    this.busyUntil = options.busyUntil ?? SHARED_BUSY_UNTIL;
   }
 
   async generate(history: Content[]): Promise<LlmResponse> {
@@ -74,10 +82,14 @@ export class GeminiClient implements LlmClient {
           this.busyUntil.delete(model);
           return response;
         } catch (error) {
-          if (!isTemporary(error)) {
+          const status = statusOf(error);
+          if (status === undefined || !(RETRY_SAME_MODEL_STATUS.has(status) || MOVE_ON_STATUS.has(status))) {
             throw error;
           }
           lastError = error;
+          if (MOVE_ON_STATUS.has(status)) {
+            break;
+          }
           if (attempt < ATTEMPTS_PER_MODEL) {
             await this.sleep(RETRY_DELAY_MS);
           }

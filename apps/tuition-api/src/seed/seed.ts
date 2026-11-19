@@ -5,7 +5,7 @@ import { DEMO_PASSWORDS, SEED_STUDENTS, SERVICE_USERS } from './seed-data';
 // Loads the demo data. Safe to run more than once: every record is upserted by its
 // natural key (studentNo, username, studentId + term, transactionId), so nothing is duplicated.
 //   Local:     npm run prisma:seed -w apps/tuition-api   (runs this file with ts-node)
-//   Container: node dist/seed/seed.js
+//   Container: node dist/seed/seed.js   (or automatically at start, see --on-start below)
 
 async function seed(prisma: PrismaClient): Promise<void> {
   const serviceUserIds: Partial<Record<Role, string>> = {};
@@ -73,6 +73,17 @@ async function seed(prisma: PrismaClient): Promise<void> {
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
+    // --on-start: used by the container start command. Seeds only when SEED_ON_START=true and the
+    // database has no students yet, so restarts never overwrite data changed through the API.
+    if (process.argv.includes('--on-start')) {
+      if (process.env.SEED_ON_START !== 'true') {
+        return;
+      }
+      if ((await prisma.student.count()) > 0) {
+        console.log('Seed skipped: the database already contains data.');
+        return;
+      }
+    }
     await seed(prisma);
   } finally {
     await prisma.$disconnect();

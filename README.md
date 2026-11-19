@@ -68,7 +68,7 @@ Kong Gateway OSS 3.9 in DB-less mode. Every REST operation, including the AI Age
 | | |
 |---|---|
 | Gateway URL (local) | `http://localhost:8000` |
-| Gateway URL (cloud) | See §9 |
+| Gateway URL (cloud) | https://tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io |
 | Configuration | [`gateway/kong.yml`](gateway/kong.yml), image [`gateway/Dockerfile`](gateway/Dockerfile) |
 | Upstream | Tuition API service `http://tuition-api:3000` |
 
@@ -137,7 +137,7 @@ A real MCP server built with the official `@modelcontextprotocol/sdk` ([`apps/mc
 | | |
 |---|---|
 | Endpoint (local) | `POST http://localhost:3001/mcp` (Streamable HTTP transport) |
-| Endpoint (cloud) | See §9 |
+| Endpoint (cloud) | `POST https://tuition-mcp.bluesea-79ab2835.swedencentral.azurecontainerapps.io/mcp` |
 | Authentication | `x-api-key` header, compared in constant time; otherwise `401` |
 | Health | `GET /health` (public) → `{ "status": "ok", "document": "UNI-TUITION-2026-01", "chunks": 25 }` |
 | Local stdio mode | `npm run start:stdio -w apps/mcp-server` (for MCP clients that start the server themselves) |
@@ -210,9 +210,18 @@ Student ──► CLI ──► Agent loop ──► Gemini (function calling)
 ### Run
 ```bash
 npm run build -w apps/agent
-npm run start -w apps/agent        # asks for student number and password
+npm run start -w apps/agent        # CLI: asks for student number and password
+npm run start:web -w apps/agent    # web chat on http://localhost:8080
 ```
-Configuration (from `.env`): `GATEWAY_URL`, `MCP_URL`, `MCP_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`), `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`, used when the main model answers "busy": each model is tried twice, requests time out after 60 s) and optionally `AGENT_TRACE_FILE` (default `logs/agent-trace.jsonl`). For scripted demos the login can be given as `AGENT_USERNAME` / `AGENT_PASSWORD`.
+Configuration (from `.env`): `GATEWAY_URL`, `MCP_URL`, `MCP_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`), `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`, used when the main model is busy: `429`/`503` are retried once on the same model, a `504` or a second failure moves to the fallback at once, requests have a 25 s deadline, and a busy model is skipped for 5 minutes) and optionally `AGENT_TRACE_FILE` (default `logs/agent-trace.jsonl`). For scripted demos the login can be given as `AGENT_USERNAME` / `AGENT_PASSWORD`.
+
+### Web chat
+The same agent also runs behind a small web page ([`chat-server.ts`](apps/agent/src/chat-server.ts), [`public/index.html`](apps/agent/public/index.html)), served by its own container (`docker compose` service `chat` at `http://localhost:8080`, Azure Container App `tuition-chat`).
+- The browser only talks to this server. The JWT, the Gemini key and the MCP key stay on the server; the page gets an HttpOnly, SameSite=Strict session cookie.
+- Each login gets its own `TuitionAgent` (own history and pending payment), kept in memory for 30 minutes of inactivity; the app therefore runs as one replica. Limits protect the free Gemini quota: 40 messages per session, 100 open sessions, 1,000 characters per message.
+- Every answer shows a collapsible tool trace (tool, input, result, confirmation decision); the full trace also goes to the container log as one JSON line per turn.
+- A payment summary comes with **Confirm payment** and **Cancel** buttons. They only send "yes" or "cancel" as the next message, so the confirmation gate in the agent decides, exactly as in the CLI.
+- Endpoints: `POST /api/login`, `GET /api/session`, `POST /api/chat`, `POST /api/logout`, `GET /health`. Tested in [`chat-server.spec.ts`](apps/agent/src/chat-server.spec.ts) with a fake API and fake agents.
 
 ### Tools given to Gemini
 | Tool | Parameters | Executed by the agent as |
@@ -338,10 +347,9 @@ The seed ([`src/seed/seed-data.ts`](apps/tuition-api/src/seed/seed-data.ts)) is 
 ```bash
 cp .env.example .env              # set JWT_SECRET and MCP_API_KEY to long random values
 docker compose up -d --build
-docker compose exec tuition-api node dist/seed/seed.js
 ./gateway/smoke-test.sh
 ```
-The API container applies the database migrations when it starts. The seed can be run any number of times. The gateway listens on `http://localhost:8000`, Swagger UI is at `http://localhost:8000/api/docs`, and the MCP server on `http://localhost:3001/mcp`.
+The API container applies the database migrations when it starts and loads the demo data on its first start (`SEED_ON_START=true`, only while the database is empty). To reload it later: `docker compose exec tuition-api node dist/seed/seed.js`. The gateway listens on `http://localhost:8000`, Swagger UI is at `http://localhost:8000/api/docs`, and the MCP server on `http://localhost:3001/mcp`.
 
 ### API without Docker (development)
 ```bash
@@ -376,23 +384,24 @@ Agent (local) ──HTTPS──► Kong gateway (external, 1 replica) ──HTTP
 
 | Component | Azure resource | Settings |
 |---|---|---|
-| Tuition API | Container App `tuition-api` | **Internal ingress only**: reachable from Kong, not from the internet. 0.5 vCPU / 1 GiB, scales 0–2. Applies migrations on start |
+| Tuition API | Container App `tuition-api` | **Internal ingress only**: reachable from Kong, not from the internet. 0.5 vCPU / 1 GiB, scales 0–2. Applies migrations (and the first seed) on start |
 | API gateway | Container App `tuition-gateway` (Kong image from `gateway/Dockerfile`) | External HTTPS ingress, **exactly 1 replica** so the in-memory mobile rate-limit counters are exact (§12.4). 0.25 vCPU / 0.5 GiB |
 | MCP server | Container App `tuition-mcp` | External HTTPS ingress, `x-api-key`; not behind the gateway. 0.25 vCPU / 0.5 GiB, scales 0–2 |
+| Web chat | Container App `tuition-chat` | External HTTPS ingress; runs the agent, calls Kong and the MCP server like the CLI. Gemini key as a secret, read from the local `.env` by `deploy.sh` (skipped if missing). 0.25 vCPU / 0.5 GiB, scales 0–1 |
 | Database | Azure Database for PostgreSQL Flexible Server | Burstable B1ms, PostgreSQL 16, 32 GB, TLS required, reachable from Azure services only |
-| Demo data | Container Apps Job `tuition-seed` (manual) | Runs `npm run db:setup` (migrations + seed) in the API image |
-| Images | Azure Container Registry (Basic) | Built in Azure with `az acr build` (linux/amd64) |
+| Demo data | Tuition API start command | Applies the migrations, then loads the demo data when `SEED_ON_START=true` and the database is still empty, so restarts never overwrite data. (Container Apps jobs are not available in the Express environment that Azure for Students creates.) |
+| Images | Azure Container Registry (Basic) | Built for linux/amd64 with the local Docker (`docker buildx`) and pushed to the registry. Azure for Students blocks ACR Tasks, so `az acr build` is only used with `IMAGE_BUILD=acr` |
 
 Secrets (`JWT_SECRET`, database URL, `MCP_API_KEY`) are generated on the first run, stored as Container Apps secrets and kept locally in `infra/.deploy-state.env`, which is not committed. Kong and the API receive the same `JWT_SECRET`.
 
 ### Deploy
-Requirements: Azure CLI, an Azure subscription (Azure for Students works) and `openssl`.
+Requirements: Azure CLI, a running Docker Desktop, an Azure subscription (Azure for Students works) and `openssl`. Azure for Students only allows a few regions (here: `swedencentral`, `francecentral`, `switzerlandnorth`, `polandcentral`, `norwayeast`).
 ```bash
 az login
 cp infra/config.env.example infra/config.env    # region and names; see the notes in the file
 ./infra/deploy.sh                               # about 15-20 minutes the first time
 ```
-The script is idempotent: running it again rebuilds the images and updates the apps without changing names or secrets. At the end it prints the URLs and writes `infra/cloud.env` (gateway URL, MCP URL and key) for the agent and the tests:
+The script is idempotent: running it again keeps names and secrets, and rebuilds and redeploys only the images whose source files changed (each image is tagged with a hash of its sources). At the end it prints the URLs and writes `infra/cloud.env` (gateway URL, MCP URL and key) for the agent and the tests:
 ```bash
 ./gateway/smoke-test.sh https://<gateway-fqdn>
 set -a; source infra/cloud.env; set +a
@@ -406,9 +415,15 @@ Azure for Students subscriptions may allow only some regions. If a step fails wi
 ### Deployed URLs
 | | URL |
 |---|---|
-| Gateway | _TBD (filled in after the deployment)_ |
-| Swagger UI | _TBD_ |
-| MCP server | _TBD_ |
+| Gateway (all REST operations) | https://tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io |
+| Swagger UI | https://tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io/api/docs |
+| MCP server | https://tuition-mcp.bluesea-79ab2835.swedencentral.azurecontainerapps.io/mcp (header `x-api-key`) |
+| Web chat | https://tuition-chat.bluesea-79ab2835.swedencentral.azurecontainerapps.io |
+| Tuition API | internal only (`tuition-api.internal.…`), reachable through the gateway |
+
+Verified against the cloud: the gateway smoke test passes all 18 checks ([docs/evidence/gateway-smoke-test-cloud.txt](docs/evidence/gateway-smoke-test-cloud.txt)), the three MCP queries return the expected sections ([docs/evidence/mcp-queries-cloud.txt](docs/evidence/mcp-queries-cloud.txt)), and the web chat answers with live Gemini function calls through Kong and the MCP server. The API and MCP server scale to zero, so the first request after a pause can take 10–30 s.
+
+The environment must use workload profiles: newer Azure CLI versions may create an "Express" environment, which has no traffic between apps and internal apps and no jobs. `deploy.sh` creates a workload-profiles environment and, if it finds an Express one, stops and explains how to recreate it (`RECREATE_ENV=true ./infra/deploy.sh`; database, registry and secrets are kept).
 
 
 ## 10. Testing
@@ -435,9 +450,9 @@ Result: 9 suites, 100 tests, all passing.
 ### MCP server and agent tests (no network, no LLM)
 ```bash
 npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see §5)
-npm test -w apps/agent        # 3 suites, 48 tests: fake-LLM agent scenarios, confirmation gate, Gemini client (see §6)
+npm test -w apps/agent        # 4 suites, 61 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see §6)
 ```
-`npm test` at the repository root runs all three workspaces (171 tests).
+`npm test` at the repository root runs all three workspaces (184 tests).
 
 ### Tuition API integration tests (PostgreSQL in Docker)
 Some behaviour can only be proved against a real database: the row lock that prevents overpayment, the unique `transactionId` under concurrency, and the SQL sorting and paging of the unpaid list.

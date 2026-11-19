@@ -1,0 +1,168 @@
+MCP server: https://tuition-mcp.bluesea-79ab2835.swedencentral.azurecontainerapps.io/mcp
+Time:       2026-11-19T11:51:01.588Z
+
+== tools/list
+[
+  {
+    "name": "search_tuition_policies",
+    "title": "Search tuition policies",
+    "description": "Searches the official university tuition policy document (payment deadlines, installments, late fees, scholarships, refunds and withdrawals, banking and payment rules). Returns the most relevant passages with their section numbers so answers can cite them (for example \"§3.2\"). Write the query in English keywords. The document contains general rules only, no student-specific balances or records.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "What to look for, e.g. \"fall payment deadline\""
+        },
+        "limit": {
+          "description": "Maximum number of passages (default 3)",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "document": {
+          "type": "string"
+        },
+        "documentId": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "section": {
+                "type": "string",
+                "description": "Section number to cite, e.g. \"3.2\""
+              },
+              "heading": {
+                "type": "string"
+              },
+              "parentHeading": {
+                "description": "Heading of the enclosing section, if any",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "description": "Policy text of the section"
+              },
+              "score": {
+                "type": "number",
+                "description": "Relevance score, higher is better"
+              }
+            },
+            "required": [
+              "section",
+              "heading",
+              "parentHeading",
+              "text",
+              "score"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "document",
+        "documentId",
+        "query",
+        "matches"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  }
+]
+
+== Query 1: tools/call search_tuition_policies {"query":"fall tuition payment deadline","limit":2}
+{
+  "document": "University_Tuition_Policies.md",
+  "documentId": "UNI-TUITION-2026-01",
+  "query": "fall tuition payment deadline",
+  "matches": [
+    {
+      "section": "8.1",
+      "heading": "When is the Fall tuition deadline?",
+      "parentHeading": "Frequently asked questions",
+      "text": "September 30, 2026. See Section 2.1.",
+      "score": 83.46
+    },
+    {
+      "section": "2.1",
+      "heading": "Fall term",
+      "parentHeading": "Payment deadlines",
+      "text": "The payment deadline for the Fall 2026 term is September 30, 2026. A student should settle the outstanding balance or have an approved installment arrangement by that date.",
+      "score": 74.9
+    }
+  ]
+}
+
+== Query 2: tools/call search_tuition_policies {"query":"installment eligibility and number of installments","limit":2}
+{
+  "document": "University_Tuition_Policies.md",
+  "documentId": "UNI-TUITION-2026-01",
+  "query": "installment eligibility and number of installments",
+  "matches": [
+    {
+      "section": "3.2",
+      "heading": "Number and size of installments",
+      "parentHeading": "Installment policy",
+      "text": "An approved balance may be divided into up to three installments. Installments should be equal where possible; any rounding difference is added to the final installment. For example, a $3,000 balance can be divided into three payments of $1,000.",
+      "score": 116.68
+    },
+    {
+      "section": "3.1",
+      "heading": "Eligibility",
+      "parentHeading": "Installment policy",
+      "text": "Students with an outstanding balance of at least $300 may request an installment arrangement. An arrangement is subject to approval; this policy does not establish whether a particular student has been approved.",
+      "score": 75.79
+    }
+  ]
+}
+
+== Query 3: tools/call search_tuition_policies {"query":"refund after withdrawal from the term","limit":2}
+{
+  "document": "University_Tuition_Policies.md",
+  "documentId": "UNI-TUITION-2026-01",
+  "query": "refund after withdrawal from the term",
+  "matches": [
+    {
+      "section": "6.1",
+      "heading": "Early withdrawal",
+      "parentHeading": "Refunds and withdrawals",
+      "text": "A student who formally withdraws within 14 calendar days of the term start may be eligible for a refund of 80% of tuition payments associated with that term, subject to administrative review.",
+      "score": 68.24
+    },
+    {
+      "section": "6.2",
+      "heading": "Later withdrawal",
+      "parentHeading": "Refunds and withdrawals",
+      "text": "After the 14-day period, refunds are reviewed individually and are not guaranteed. The AI assistant should direct students to the university finance office for a formal decision.",
+      "score": 58.39
+    }
+  ]
+}

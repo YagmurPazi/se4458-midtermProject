@@ -23,6 +23,8 @@ services:
     environment:
       DATABASE_URL: postgresql://tuition:tuition@postgres:5432/tuition?schema=public
       PORT: "3000"
+      # Load the demo data on the first start (only while the database is empty).
+      SEED_ON_START: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,6 +40,25 @@ services:
     ports:
       # Reached directly by the agent; the MCP path does not go through the API gateway.
       - "3001:3001"
+
+  chat:
+    # Web chat: the agent behind a small HTTP server (http://localhost:8080).
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    environment:
+      PORT: "8080"
+      GATEWAY_URL: http://kong:8000
+      MCP_URL: http://mcp-server:3001/mcp
+      MCP_API_KEY: ${MCP_API_KEY:?set MCP_API_KEY in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY in .env}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash-lite}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kong
+      - mcp-server
 
   kong:
     # Kong OSS 3.9 with gateway/kong.yml baked in (see gateway/Dockerfile).
