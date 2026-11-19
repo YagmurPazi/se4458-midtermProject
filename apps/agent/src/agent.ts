@@ -79,7 +79,30 @@ function errorOutput(error: unknown): ToolOutput {
   return { error: { message: error instanceof Error ? error.message : String(error) } };
 }
 
-export function confirmationMessage({ studentNo, term, amount, currentBalance }: PendingPayment): string {
+/** Reply written by the agent itself when a confirmed payment was sent but the LLM could not answer. */
+export function paymentReport(output: ToolOutput): string {
+  const result = output.result as Record<string, unknown> | undefined;
+  if (result && result.status === 'SUCCESS') {
+    const remaining =
+      typeof result.remainingBalance === 'number'
+        ? ` Remaining balance: ${money(result.remainingBalance)} USD.`
+        : '';
+    return (
+      `Your payment of ${money(Number(result.paidAmount))} USD for ${String(result.term)} was recorded ` +
+      `(transaction ID ${String(result.transactionId)}).${remaining}`
+    );
+  }
+  const error = output.error as { code?: string; message?: string } | undefined;
+  const reason = (error?.message ?? 'unknown error').replace(/[.\s]+$/, '');
+  return `The payment was not completed${error?.code ? ` (${error.code})` : ''}: ${reason}. No money was moved.`;
+}
+
+export function confirmationMessage({
+  studentNo,
+  term,
+  amount,
+  currentBalance,
+}: PendingPayment): string {
   return [
     'Please confirm this payment / Lütfen bu ödemeyi onaylayın:',
     `  Student:         ${studentNo} (logged-in user)`,
@@ -109,17 +132,22 @@ export class TuitionAgent {
     const steps: TraceStep[] = [];
     const parts: Part[] = [{ text: userText }];
     let confirmation: ConfirmationRecord | undefined;
+    let paymentResult: ToolOutput | undefined;
 
     // The confirmation gate: a pending payment is decided by this reply, in code, before the LLM sees it.
     if (this.pending) {
       const pending = this.pending;
       this.pending = null;
-      const details = { term: pending.term, amount: pending.amount, currentBalance: pending.currentBalance };
+      const details = {
+        term: pending.term,
+        amount: pending.amount,
+        currentBalance: pending.currentBalance,
+      };
       if (isExplicitConfirmation(userText)) {
         confirmation = { decision: 'CONFIRMED', ...details };
-        const result = await this.submitPayment(pending, steps);
+        paymentResult = await this.submitPayment(pending, steps);
         parts.push({
-          text: `[Payment system message, not written by the user] The user confirmed the pending payment. Payment API result: ${JSON.stringify(result)}`,
+          text: `[Payment system message, not written by the user] The user confirmed the pending payment. Payment API result: ${JSON.stringify(paymentResult)}`,
         });
       } else {
         confirmation = { decision: 'CANCELLED', ...details };
@@ -139,10 +167,15 @@ export class TuitionAgent {
       text = await this.runModel(steps, llm);
     } catch (error) {
       // For example the LLM is unavailable: drop this turn so the conversation history stays valid.
-      // A payment confirmed above has already been sent and is not affected.
       this.history.length = historyLength;
       this.pending = null;
-      throw error;
+      if (!paymentResult) {
+        throw error;
+      }
+      // A confirmed payment was already sent: its result must still reach the user (policy §7.4), so the
+      // agent reports it itself and keeps the turn in the history.
+      text = paymentReport(paymentResult);
+      this.history.push({ role: 'user', parts }, { role: 'model', parts: [{ text }] });
     }
     if (this.pending) {
       const { term, amount, currentBalance } = this.pending;
@@ -183,14 +216,21 @@ export class TuitionAgent {
       const results: Part[] = [];
       for (const call of response.functionCalls) {
         const output = limitReached
-          ? { error: { code: 'TOOL_CALL_LIMIT_REACHED', message: 'Too many tool calls in one turn.' } }
+          ? {
+              error: {
+                code: 'TOOL_CALL_LIMIT_REACHED',
+                message: 'Too many tool calls in one turn.',
+              },
+            }
           : await this.runTool(call, steps);
         results.push({ functionResponse: { id: call.id, name: call.name, response: output } });
       }
       this.history.push({ role: 'user', parts: results });
 
       if (limitReached) {
-        return this.reply('Sorry, I could not complete this request. Please ask again in a simpler way.');
+        return this.reply(
+          'Sorry, I could not complete this request. Please ask again in a simpler way.',
+        );
       }
       if (this.pending) {
         // Stop here: the summary is shown by the agent and the payment waits for the user's next message.
@@ -215,7 +255,13 @@ export class TuitionAgent {
     } catch (error) {
       output = errorOutput(error);
     }
-    steps.push({ tool: name, input: args, ok: !('error' in output), output, durationMs: Date.now() - started });
+    steps.push({
+      tool: name,
+      input: args,
+      ok: !('error' in output),
+      output,
+      durationMs: Date.now() - started,
+    });
     return output;
   }
 
@@ -245,12 +291,27 @@ export class TuitionAgent {
 
   /** Validates a payment request against the live balance and parks it until the user confirms. */
   private async requestPayment(args: Record<string, unknown>): Promise<ToolOutput> {
+    if (this.pending) {
+      // Only one payment can wait for confirmation; a second request in the same turn must not replace it.
+      return {
+        error: {
+          code: 'PAYMENT_ALREADY_PENDING',
+          message:
+            'Another payment is already waiting for confirmation. Request one payment at a time.',
+        },
+      };
+    }
     const { term, amount } = args;
     if (typeof term !== 'string' || !TERM.test(term)) {
       return { error: { code: 'INVALID_ARGUMENT', message: 'term must look like 2026-FALL' } };
     }
     if (typeof amount !== 'number' || !(amount > 0) || !AMOUNT.test(String(amount))) {
-      return { error: { code: 'INVALID_ARGUMENT', message: 'amount must be a positive number with at most 2 decimals' } };
+      return {
+        error: {
+          code: 'INVALID_ARGUMENT',
+          message: 'amount must be a positive number with at most 2 decimals',
+        },
+      };
     }
 
     const { balance } = await this.deps.api.getTuition(this.deps.session, term);
@@ -263,11 +324,17 @@ export class TuitionAgent {
       };
     }
 
-    this.pending = { studentNo: this.deps.session.studentNo, term, amount, currentBalance: balance };
+    this.pending = {
+      studentNo: this.deps.session.studentNo,
+      term,
+      amount,
+      currentBalance: balance,
+    };
     return {
       result: {
         status: 'AWAITING_USER_CONFIRMATION',
-        message: 'The payment was NOT submitted. The user must explicitly confirm it in their next message.',
+        message:
+          'The payment was NOT submitted. The user must explicitly confirm it in their next message.',
         ...this.pending,
       },
     };

@@ -59,6 +59,26 @@ describe('Tuition API over HTTP (mocked database)', () => {
       });
     });
 
+    it('reports an oversized JSON body as VALIDATION_ERROR, not as a file error', async () => {
+      const res = await http()
+        .post('/api/v1/auth/login')
+        .set('Content-Type', 'application/json')
+        .send(JSON.stringify({ username: 'x', password: 'a'.repeat(200 * 1024) }))
+        .expect(400);
+
+      expect(res.body).toMatchObject({ error: 'VALIDATION_ERROR', message: 'The request body is too large.' });
+    });
+
+    it('reports malformed JSON as VALIDATION_ERROR', async () => {
+      const res = await http()
+        .post('/api/v1/auth/login')
+        .set('Content-Type', 'application/json')
+        .send('{"username": ')
+        .expect(400);
+
+      expect(res.body).toMatchObject({ statusCode: 400, error: 'VALIDATION_ERROR' });
+    });
+
     it('returns INTERNAL_ERROR without leaking details for unexpected failures', async () => {
       jest.spyOn(Logger.prototype, 'error').mockImplementation();
       prisma.student.findUnique.mockRejectedValue(new Error('db exploded'));
@@ -393,6 +413,16 @@ describe('Tuition API over HTTP (mocked database)', () => {
       const res = await upload(Buffer.alloc(1024 * 1024 + 1, 'a')).expect(400);
 
       expect(res.body.error).toBe('FILE_TOO_LARGE');
+    });
+
+    it('returns 400 MISSING_FILE when the file is sent in another multipart field', async () => {
+      const res = await http()
+        .post('/api/v1/admin/tuition/batch')
+        .set(bearer(Role.ADMIN))
+        .attach('upload', Buffer.from(HEADER), 'tuition.csv')
+        .expect(400);
+
+      expect(res.body.error).toBe('MISSING_FILE');
     });
 
     it('returns 403 FORBIDDEN_ROLE for a non-admin token', async () => {

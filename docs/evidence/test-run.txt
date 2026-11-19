@@ -1,57 +1,43 @@
-Test run: 2026-11-19T12:03:23Z (commit 85195f4 + uncommitted Stage 8 changes)
+Test run: 2026-11-19T13:06:57Z (commit 8beef6e + uncommitted review fixes)
 No cloud and no live LLM are used: the agent tests use a scripted fake LLM.
 
 $ npm test   (all workspaces, unit tests)
 > se4458-midtermproject@0.1.0 test
 > npm run test --workspaces --if-present
 > agent@0.1.0 test
-PASS src/agent.spec.ts
 PASS src/tuition-api.spec.ts
+PASS src/agent.spec.ts
 PASS src/llm.spec.ts
 PASS src/chat-server.spec.ts
 Test Suites: 4 passed, 4 total
-Tests:       63 passed, 63 total
+Tests:       68 passed, 68 total
 Snapshots:   0 total
-Time:        2.725 s, estimated 3 s
+Time:        2.571 s, estimated 4 s
 > mcp-server@0.1.0 test
-PASS src/policy-chunks.spec.ts
 PASS src/policy-index.spec.ts
+PASS src/policy-chunks.spec.ts
 PASS src/http-app.spec.ts
 Test Suites: 3 passed, 3 total
 Tests:       23 passed, 23 total
 Snapshots:   0 total
-Time:        1.902 s, estimated 2 s
+Time:        1.863 s, estimated 3 s
 > tuition-api@0.1.0 test
+PASS src/banking/payments.service.spec.ts
 PASS src/admin/unpaid-tuition.service.spec.ts
 PASS src/admin/tuition-admin.service.spec.ts
-PASS src/banking/payments.service.spec.ts
 PASS src/tuition/tuition-query.service.spec.ts
-PASS src/health/health.controller.spec.ts
 PASS src/auth/password.spec.ts
+PASS src/health/health.controller.spec.ts
 PASS src/admin/tuition-batch.service.spec.ts
 PASS src/auth/auth.service.spec.ts
 PASS src/app.http.spec.ts
 Test Suites: 9 passed, 9 total
-Tests:       100 passed, 100 total
+Tests:       103 passed, 103 total
 Snapshots:   0 total
-Time:        5.286 s
+Time:        5.078 s
 
 $ npm run test:int -w apps/tuition-api   (integration tests against PostgreSQL in Docker)
 PASS src/tuition.int-spec.ts
-      ✓ lets exactly one of two payments succeed when together they exceed the balance (71 ms)
-      ✓ never lets many parallel payments overpay (61 ms)
-      ✓ records a repeated transactionId once and answers the other request with 409 (19 ms)
-      ✓ answers a repeated transactionId with 409 even when the retry would now exceed the balance (19 ms)
-      ✓ sorts by balance descending by default, breaking ties by studentNo ascending (12 ms)
-      ✓ sorts by balance ascending with the same tie-break (4 ms)
-      ✓ sorts by studentNo in both directions (8 ms)
-      ✓ pages with stable boundaries (6 ms)
-      ✓ rejects a page beyond the last page (2 ms)
-      ✓ returns an empty first page with totalPages 0 for a term without unpaid students (4 ms)
-      ✓ creates, leaves unchanged, updates and then rejects an amount below the paid total (26 ms)
-      ✓ handles two concurrent creates for the same student and term without a server error (84 ms)
-      ✓ rejects an unknown student (3 ms)
-      ✓ imports a CSV file row by row (14 ms)
 Test Suites: 1 passed, 1 total
 Tests:       14 passed, 14 total
-Time:        3.594 s
+Time:        1.968 s, estimated 3 s

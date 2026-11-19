@@ -23,11 +23,14 @@ export interface ChatServerOptions {
   maxMessagesPerSession?: number;
   maxMessageLength?: number;
   idleTimeoutMs?: number;
+  /** Absolute session lifetime; kept below the JWT lifetime (1 h) so a session never outlives its token. */
+  maxSessionAgeMs?: number;
   now?: () => number;
 }
 
 interface ChatSession {
   studentNo: string;
+  createdAt: number;
   agent: ChatAgent;
   lastSeen: number;
   messages: number;
@@ -60,13 +63,14 @@ export function createChatServer(options: ChatServerOptions): Express {
     maxMessagesPerSession = 40,
     maxMessageLength = 1000,
     idleTimeoutMs = 30 * 60_000,
+    maxSessionAgeMs = 55 * 60_000,
     now = Date.now,
   } = options;
   const sessions = new Map<string, ChatSession>();
 
   const removeIdleSessions = (): void => {
     for (const [id, session] of sessions) {
-      if (now() - session.lastSeen > idleTimeoutMs) {
+      if (now() - session.lastSeen > idleTimeoutMs || now() - session.createdAt > maxSessionAgeMs) {
         sessions.delete(id);
       }
     }
@@ -102,7 +106,12 @@ export function createChatServer(options: ChatServerOptions): Express {
 
   app.post('/api/login', async (req, res) => {
     const { username, password } = (req.body ?? {}) as Record<string, unknown>;
-    if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
+    if (
+      typeof username !== 'string' ||
+      typeof password !== 'string' ||
+      !username.trim() ||
+      !password
+    ) {
       sendError(res, 400, 'VALIDATION_ERROR', 'Student number and password are required.');
       return;
     }
@@ -114,12 +123,20 @@ export function createChatServer(options: ChatServerOptions): Express {
     try {
       const session = await api.login(username.trim(), password);
       const id = randomBytes(24).toString('base64url');
-      sessions.set(id, { studentNo: session.studentNo, agent: createAgent(session), lastSeen: now(), messages: 0, busy: false });
+      sessions.set(id, {
+        studentNo: session.studentNo,
+        agent: createAgent(session),
+        createdAt: now(),
+        lastSeen: now(),
+        messages: 0,
+        busy: false,
+      });
       res.cookie(COOKIE, id, cookieOptions).json({ studentNo: session.studentNo });
     } catch (error) {
       if (error instanceof ApiError && error.status < 500) {
         const code = error.code === 'NOT_A_STUDENT' ? 'NOT_A_STUDENT' : 'INVALID_CREDENTIALS';
-        const message = code === 'NOT_A_STUDENT' ? error.message : 'Invalid student number or password.';
+        const message =
+          code === 'NOT_A_STUDENT' ? error.message : 'Invalid student number or password.';
         sendError(res, error.code === 'NOT_A_STUDENT' ? 403 : 401, code, message);
         return;
       }
@@ -145,11 +162,21 @@ export function createChatServer(options: ChatServerOptions): Express {
     const { session } = current;
     const message = (req.body as { message?: unknown } | undefined)?.message;
     if (typeof message !== 'string' || !message.trim() || message.length > maxMessageLength) {
-      sendError(res, 400, 'VALIDATION_ERROR', `The message must be 1-${maxMessageLength} characters.`);
+      sendError(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        `The message must be 1-${maxMessageLength} characters.`,
+      );
       return;
     }
     if (session.messages >= maxMessagesPerSession) {
-      sendError(res, 429, 'MESSAGE_LIMIT', 'This session has reached its message limit. Please log in again.');
+      sendError(
+        res,
+        429,
+        'MESSAGE_LIMIT',
+        'This session has reached its message limit. Please log in again.',
+      );
       return;
     }
     if (session.busy) {
@@ -161,6 +188,17 @@ export function createChatServer(options: ChatServerOptions): Express {
     session.messages++;
     try {
       const reply = await session.agent.handle(message.trim());
+      const tokenRejected = reply.trace.steps.some(
+        (step) =>
+          (step.output as { error?: { status?: number } } | undefined)?.error?.status === 401,
+      );
+      if (tokenRejected) {
+        // The JWT behind this session is no longer accepted (for example it expired): end the session.
+        sessions.delete(current.id);
+        res.clearCookie(COOKIE, { ...cookieOptions, maxAge: undefined });
+        sendError(res, 401, 'NOT_LOGGED_IN', 'Your login has expired. Please log in again.');
+        return;
+      }
       res.json({
         reply: reply.text,
         pendingPayment: reply.pendingPayment,
@@ -169,7 +207,12 @@ export function createChatServer(options: ChatServerOptions): Express {
       });
     } catch (error) {
       console.error('Chat turn failed:', error);
-      sendError(res, 502, 'ASSISTANT_UNAVAILABLE', 'The assistant could not answer right now. Please try again.');
+      sendError(
+        res,
+        502,
+        'ASSISTANT_UNAVAILABLE',
+        'The assistant could not answer right now. Please try again.',
+      );
     } finally {
       session.busy = false;
     }

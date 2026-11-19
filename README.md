@@ -22,7 +22,7 @@ A conversational assistant that answers student questions about tuition deadline
 ## 1. Architecture
 
 ```
-User (CLI chat)
+User (CLI chat or web chat)
    │ question
    ▼
 AI Agent orchestrator ───── prompts / tool requests ─────► LLM (Gemini, function calling)
@@ -42,7 +42,7 @@ AI Agent orchestrator ───── prompts / tool requests ─────►
 |---|---|
 | `apps/tuition-api` | NestJS REST API, Prisma schema and migrations, unit tests |
 | `apps/mcp-server` | MCP server, policy indexer, `search_tuition_policies` tool |
-| `apps/agent` | CLI chat agent (Gemini + MCP client + REST client) |
+| `apps/agent` | Chat agent (Gemini + MCP client + REST client), as a CLI and as a web chat server with a static page |
 | `gateway/` | Kong declarative configuration |
 | `infra/` | Azure deployment scripts |
 | `docs/` | API contract, ER diagram, screenshots and tool traces |
@@ -70,7 +70,7 @@ Kong Gateway OSS 3.9 in DB-less mode. Every REST operation, including the AI Age
 | Gateway URL (local) | `http://localhost:8000` |
 | Gateway URL (cloud) | https://tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io |
 | Configuration | [`gateway/kong.yml`](gateway/kong.yml), image [`gateway/Dockerfile`](gateway/Dockerfile) |
-| Upstream | Tuition API service `http://tuition-api:3000` |
+| Upstream | Tuition API service, set by `UPSTREAM_URL` at container start: `http://tuition-api:3000` in Docker Compose, `https://tuition-api.internal.<environment domain>` in Azure |
 
 ### Route mappings
 Paths are versioned (`/api/v1`) and forwarded unchanged (`strip_path: false`). Each route accepts only its own HTTP method; any other path, version or method gets Kong's `404`.
@@ -373,7 +373,7 @@ Fictitious accounts created by the seed, for local and demo use only.
 
 ## 9. Cloud deployment
 
-Microsoft Azure, deployed with the Azure CLI scripts in [`infra/`](infra). The CLI agent runs on the user's machine and connects to the cloud gateway and MCP server.
+Microsoft Azure, deployed with the Azure CLI scripts in [`infra/`](infra). The web chat runs in Azure; the CLI agent runs on the user's machine and connects to the same cloud gateway and MCP server.
 
 ```
                          Azure Container Apps environment
@@ -389,7 +389,7 @@ Agent (local) ──HTTPS──► Kong gateway (external, 1 replica) ──HTTP
 | MCP server | Container App `tuition-mcp` | External HTTPS ingress, `x-api-key`; not behind the gateway. 0.25 vCPU / 0.5 GiB, scales 0–2 |
 | Web chat | Container App `tuition-chat` | External HTTPS ingress; runs the agent, calls Kong and the MCP server like the CLI. Gemini key as a secret, read from the local `.env` by `deploy.sh` (skipped if missing). 0.25 vCPU / 0.5 GiB, scales 0–1 |
 | Database | Azure Database for PostgreSQL Flexible Server | Burstable B1ms, PostgreSQL 16, 32 GB, TLS required, reachable from Azure services only |
-| Demo data | Tuition API start command | Applies the migrations, then loads the demo data when `SEED_ON_START=true` and the database is still empty, so restarts never overwrite data. (Container Apps jobs are not available in the Express environment that Azure for Students creates.) |
+| Demo data | Tuition API start command | Applies the migrations, then loads the demo data when `SEED_ON_START=true` and the database is still empty, so restarts never overwrite data. (A separate seed job was dropped because the first, Express-mode environment did not support jobs; this keeps the deployment to one step.) |
 | Images | Azure Container Registry (Basic) | Built for linux/amd64 with the local Docker (`docker buildx`) and pushed to the registry. Azure for Students blocks ACR Tasks, so `az acr build` is only used with `IMAGE_BUILD=acr` |
 
 Secrets (`JWT_SECRET`, database URL, `MCP_API_KEY`) are generated on the first run, stored as Container Apps secrets and kept locally in `infra/.deploy-state.env`, which is not committed. Kong and the API receive the same `JWT_SECRET`.
@@ -445,14 +445,14 @@ Prisma is replaced by a mock, so these tests need no database, Docker, cloud ser
 | [`unpaid-tuition.service.spec.ts`](apps/tuition-api/src/admin/unpaid-tuition.service.spec.ts) | Unpaid list: paging, `PAGE_OUT_OF_RANGE`, empty result with `totalPages: 0` |
 | [`auth.service.spec.ts`](apps/tuition-api/src/auth/auth.service.spec.ts), [`password.spec.ts`](apps/tuition-api/src/auth/password.spec.ts) | Login, token claims, `INVALID_CREDENTIALS`, scrypt hashing |
 
-Result: 9 suites, 100 tests, all passing.
+Result: 9 suites, 103 tests, all passing.
 
 ### MCP server and agent tests (no network, no LLM)
 ```bash
 npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see §5)
-npm test -w apps/agent        # 4 suites, 63 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see §6)
+npm test -w apps/agent        # 4 suites, 68 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see §6)
 ```
-`npm test` at the repository root runs all three workspaces (186 tests).
+`npm test` at the repository root runs all three workspaces (194 tests).
 
 ### Tuition API integration tests (PostgreSQL in Docker)
 Some behaviour can only be proved against a real database: the row lock that prevents overpayment, the unique `transactionId` under concurrency, and the SQL sorting and paging of the unpaid list.
@@ -480,7 +480,7 @@ All evidence files are in [`docs/evidence/`](docs/evidence). Tokens and keys are
 | Agent cannot read another student's data | Same run: "Show me the tuition balance of student 20230002" is refused; no tool is called |
 | Three distinct MCP retrieval queries | [mcp-queries-cloud.txt](docs/evidence/mcp-queries-cloud.txt) (cloud) and [mcp-queries.txt](docs/evidence/mcp-queries.txt) (local), official MCP client |
 | Gateway: routes, JWT on protected routes, mobile limit, error responses | [gateway-smoke-test-cloud.txt](docs/evidence/gateway-smoke-test-cloud.txt) (cloud, 18/18) and [gateway-smoke-test.txt](docs/evidence/gateway-smoke-test.txt) (local) |
-| Unit and integration tests | [test-run.txt](docs/evidence/test-run.txt): 186 unit tests (API 100, MCP 23, agent 63) and 14 integration tests against PostgreSQL, all passing |
+| Unit and integration tests | [test-run.txt](docs/evidence/test-run.txt): 194 unit tests (API 103, MCP 23, agent 68) and 14 integration tests against PostgreSQL, all passing |
 | Swagger UI through the cloud gateway | [screenshots/swagger-ui-cloud.png](docs/evidence/screenshots/swagger-ui-cloud.png) |
 | Web chat with tool trace, confirmation and payment | [web-chat-mcp-and-rest.png](docs/evidence/screenshots/web-chat-mcp-and-rest.png), [web-chat-payment-confirmation.png](docs/evidence/screenshots/web-chat-payment-confirmation.png), [web-chat-payment-done.png](docs/evidence/screenshots/web-chat-payment-done.png) (web chat container from the local Docker Compose stack; the same image runs in Azure) |
 
@@ -523,7 +523,7 @@ You: Am I eligible to pay my Fall 2026 balance in installments? How much would e
 | LLM | Google Gemini (Flash model) via the Gemini API free tier | Native function calling, no cost for this project's volume (see section 13) |
 | MCP | Official `@modelcontextprotocol/sdk`, Streamable HTTP transport (stdio also supported for local use) | HTTP is required to deploy the MCP service as a separate cloud service |
 | Search | Full-text BM25 search with MiniSearch | Allowed by the assignment; no embedding cost; deterministic results for tests |
-| Chat interface | Command-line chat | UI is not graded; a CLI makes tool traces easy to show |
+| Chat interface | Command-line chat and a small web chat (same agent) | UI is not graded; the CLI makes tool traces easy to record, the web chat shows them to a user |
 
 ### 12.2 API style and versioning
 - REST over JSON, all routes under `/api/v1`. A breaking change would be published as `/api/v2` alongside v1.
@@ -546,6 +546,7 @@ You: Am I eligible to pay my Fall 2026 balance in installments? How much would e
 - Every call counts, including calls that end in an error such as `404`.
 - The day is a calendar day in **UTC** (Kong's fixed daily window).
 - Counters are kept in Kong's memory (`policy: local`) and the gateway runs as a **single instance**, so the count is exact. A restart resets the counters. A multi-instance deployment would need the `redis` policy.
+- The mobile route is public, as in the specification, so the `X-Student-No` header is not authenticated: anyone who knows a student number can use up that student's three daily queries. The response only contains tuition totals. A production mobile app would send a signed student token and key the limit by its claim.
 
 ### 12.5 Tuition and balance
 - Currency is **USD**. The policy document uses dollar amounts, so `currency` must be `USD` and no conversion is performed.
@@ -568,7 +569,7 @@ You: Am I eligible to pay my Fall 2026 balance in installments? How much would e
 ### 12.7 Payments
 - Payments are **simulated**. No real money or card processing.
 - Partial and full payments are allowed. The amount must be positive and must not exceed the remaining balance (policy §7.2). Overpayment is not supported.
-- `transactionId` is the idempotency key (policy §7.4). A repeated `transactionId` is rejected with `409` and the original payment is returned; no second record is created.
+- `transactionId` is the idempotency key (policy §7.4). A repeated `transactionId` is rejected with `409` and no second record is created; the original payment is returned only to the student it belongs to (see §12.12).
 - The tuition row is locked during a payment, so concurrent payments cannot overpay.
 - A partial payment is **not** an installment approval (policy §3.4). The API has no installment-approval operation, and the assistant does not promise approval.
 
@@ -612,7 +613,7 @@ These details were fixed while implementing the API; [docs/API.md](docs/API.md) 
 
 ### 12.13 Deployment
 - Cloud: Microsoft Azure. Tuition API, MCP server and Kong run on Azure Container Apps; the database is Azure Database for PostgreSQL Flexible Server (Burstable B1MS).
-- The CLI agent runs on the user's machine and connects to the cloud gateway and MCP URLs.
+- The web chat runs as a fourth container app; the CLI agent runs on the user's machine. Both connect to the cloud gateway and MCP URLs.
 - Secrets (JWT secret, database URL, Gemini API key, MCP API key) are supplied as environment variables and are never committed.
 
 ## 13. Cost

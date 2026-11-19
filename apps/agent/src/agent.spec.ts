@@ -12,8 +12,16 @@ type Step = (history: Content[]) => LlmResponse;
 
 function callTools(...calls: [string, Record<string, unknown>][]): Step {
   return () => {
-    const functionCalls: FunctionCall[] = calls.map(([name, args], i) => ({ id: `call-${i}`, name, args }));
-    return { content: { role: 'model', parts: functionCalls.map((functionCall) => ({ functionCall })) }, functionCalls, text: '' };
+    const functionCalls: FunctionCall[] = calls.map(([name, args], i) => ({
+      id: `call-${i}`,
+      name,
+      args,
+    }));
+    return {
+      content: { role: 'model', parts: functionCalls.map((functionCall) => ({ functionCall })) },
+      functionCalls,
+      text: '',
+    };
   };
 }
 
@@ -57,7 +65,13 @@ const policyResult = {
   document: 'University_Tuition_Policies.md',
   documentId: 'UNI-TUITION-2026-01',
   query: 'fall payment deadline',
-  matches: [{ section: '2.1', heading: 'Fall term', text: 'The payment deadline for the Fall 2026 term is September 30, 2026.' }],
+  matches: [
+    {
+      section: '2.1',
+      heading: 'Fall term',
+      text: 'The payment deadline for the Fall 2026 term is September 30, 2026.',
+    },
+  ],
 };
 
 function setup(script: Step[], maxToolRounds?: number) {
@@ -65,12 +79,25 @@ function setup(script: Step[], maxToolRounds?: number) {
   const api = {
     login: jest.fn(),
     getTuition: jest.fn().mockResolvedValue(fallTuition),
-    pay: jest.fn().mockResolvedValue({ status: 'SUCCESS', transactionId: 'tx-1', remainingBalance: 1000 }),
+    pay: jest
+      .fn()
+      .mockResolvedValue({ status: 'SUCCESS', transactionId: 'tx-1', remainingBalance: 1000 }),
   } satisfies TuitionApi;
-  const policy = { search: jest.fn().mockResolvedValue(policyResult), close: jest.fn() } satisfies PolicySearch;
+  const policy = {
+    search: jest.fn().mockResolvedValue(policyResult),
+    close: jest.fn(),
+  } satisfies PolicySearch;
   const traces: TurnTrace[] = [];
   const trace: TraceSink = { record: (t) => traces.push(t) };
-  const agent = new TuitionAgent({ llm, api, policy, session, trace, newTransactionId: () => 'tx-1', maxToolRounds });
+  const agent = new TuitionAgent({
+    llm,
+    api,
+    policy,
+    session,
+    trace,
+    newTransactionId: () => 'tx-1',
+    maxToolRounds,
+  });
   return { agent, llm, api, policy, traces };
 }
 
@@ -99,7 +126,9 @@ describe('TuitionAgent', () => {
       expect(traces[0]).toMatchObject({
         user: 'When is the Fall tuition deadline?',
         studentNo: '20230001',
-        steps: [{ tool: 'search_tuition_policies', input: { query: 'fall payment deadline' }, ok: true }],
+        steps: [
+          { tool: 'search_tuition_policies', input: { query: 'fall payment deadline' }, ok: true },
+        ],
         answer: 'The Fall deadline is September 30, 2026 (§2.1).',
       });
     });
@@ -119,28 +148,47 @@ describe('TuitionAgent', () => {
 
     it('MCP + REST: runs both tools requested in one model turn and returns both results', async () => {
       const { agent, llm, api, policy, traces } = setup([
-        callTools(['get_my_tuition', {}], ['search_tuition_policies', { query: 'installment eligibility' }]),
-        say('Your balance is 1,500.00 USD, so you may request installments, subject to approval (§3.1).'),
+        callTools(
+          ['get_my_tuition', {}],
+          ['search_tuition_policies', { query: 'installment eligibility' }],
+        ),
+        say(
+          'Your balance is 1,500.00 USD, so you may request installments, subject to approval (§3.1).',
+        ),
       ]);
 
       await agent.handle('Am I eligible for installments?');
 
       expect(api.getTuition).toHaveBeenCalledWith(session, undefined);
       expect(policy.search).toHaveBeenCalledWith('installment eligibility', undefined);
-      expect(functionResponses(llm).map((r) => r?.name)).toEqual(['get_my_tuition', 'search_tuition_policies']);
-      expect(traces[0].steps.map((s) => s.tool)).toEqual(['get_my_tuition', 'search_tuition_policies']);
+      expect(functionResponses(llm).map((r) => r?.name)).toEqual([
+        'get_my_tuition',
+        'search_tuition_policies',
+      ]);
+      expect(traces[0].steps.map((s) => s.tool)).toEqual([
+        'get_my_tuition',
+        'search_tuition_policies',
+      ]);
     });
 
     it('adds up the LLM calls and token use of a turn in the trace', async () => {
-    const { agent, traces } = setup([callTools(['get_my_tuition', {}]), say('Your balance is 1,500.00 USD.')]);
+      const { agent, traces } = setup([
+        callTools(['get_my_tuition', {}]),
+        say('Your balance is 1,500.00 USD.'),
+      ]);
 
-    await agent.handle('balance?');
+      await agent.handle('balance?');
 
-    // The tool-call response has no usage in this script; the final answer reports 100 in / 20 out.
-    expect(traces[0].llm).toEqual({ calls: 2, models: ['fake-model'], inputTokens: 100, outputTokens: 20 });
-  });
+      // The tool-call response has no usage in this script; the final answer reports 100 in / 20 out.
+      expect(traces[0].llm).toEqual({
+        calls: 2,
+        models: ['fake-model'],
+        inputTokens: 100,
+        outputTokens: 20,
+      });
+    });
 
-  it('answers directly when the LLM needs no tool', async () => {
+    it('answers directly when the LLM needs no tool', async () => {
       const { agent, api, policy, traces } = setup([say('Hello! How can I help?')]);
 
       expect((await agent.handle('Hi')).text).toBe('Hello! How can I help?');
@@ -168,12 +216,18 @@ describe('TuitionAgent', () => {
         callTools(['get_my_tuition', {}]),
         say('I could not read your account.'),
       ]);
-      api.getTuition.mockRejectedValueOnce(new ApiError(403, 'FORBIDDEN_STUDENT', 'A student can only access their own tuition.'));
+      api.getTuition.mockRejectedValueOnce(
+        new ApiError(403, 'FORBIDDEN_STUDENT', 'A student can only access their own tuition.'),
+      );
 
       await agent.handle('balance?');
 
       expect(functionResponses(llm)[0]?.response).toEqual({
-        error: { status: 403, code: 'FORBIDDEN_STUDENT', message: 'A student can only access their own tuition.' },
+        error: {
+          status: 403,
+          code: 'FORBIDDEN_STUDENT',
+          message: 'A student can only access their own tuition.',
+        },
       });
       expect(traces[0].steps[0].ok).toBe(false);
     });
@@ -190,16 +244,29 @@ describe('TuitionAgent', () => {
       expect(api.pay).not.toHaveBeenCalled();
       expect(api.getTuition).toHaveBeenCalledWith(session, '2026-FALL'); // live balance for the summary
       expect(llm.requests).toHaveLength(1); // the turn ends without asking the LLM again
-      expect(reply.pendingPayment).toEqual({ studentNo: '20230001', term: '2026-FALL', amount: 500, currentBalance: 1500 });
+      expect(reply.pendingPayment).toEqual({
+        studentNo: '20230001',
+        term: '2026-FALL',
+        amount: 500,
+        currentBalance: 1500,
+      });
       expect(reply.text).toBe(confirmationMessage(reply.pendingPayment!));
       expect(reply.text).toContain('20230001');
       expect(reply.text).toContain('500.00 USD');
       expect(reply.text).toContain('1,500.00 USD');
-      expect(traces[0].confirmation).toEqual({ decision: 'REQUESTED', term: '2026-FALL', amount: 500, currentBalance: 1500 });
+      expect(traces[0].confirmation).toEqual({
+        decision: 'REQUESTED',
+        term: '2026-FALL',
+        amount: 500,
+        currentBalance: 1500,
+      });
     });
 
     it('submits exactly one payment after an explicit "yes", with a new transactionId', async () => {
-      const { agent, llm, api, traces } = setup([requestPayment, say('Done: 500.00 USD paid, remaining 1,000.00 USD.')]);
+      const { agent, llm, api, traces } = setup([
+        requestPayment,
+        say('Done: 500.00 USD paid, remaining 1,000.00 USD.'),
+      ]);
       await agent.handle('Pay 500 dollars for Fall 2026');
 
       const reply = await agent.handle('yes');
@@ -230,7 +297,10 @@ describe('TuitionAgent', () => {
     });
 
     it('cancels the payment when the next message is not an explicit confirmation', async () => {
-      const { agent, llm, api, traces } = setup([requestPayment, say('Okay, I did not make the payment.')]);
+      const { agent, llm, api, traces } = setup([
+        requestPayment,
+        say('Okay, I did not make the payment.'),
+      ]);
       await agent.handle('Pay 500 dollars for Fall 2026');
 
       const reply = await agent.handle('Can I pay $500?');
@@ -243,7 +313,11 @@ describe('TuitionAgent', () => {
     });
 
     it('a later "yes" does not revive a cancelled payment', async () => {
-      const { agent, api } = setup([requestPayment, say('Cancelled.'), say('There is nothing to confirm.')]);
+      const { agent, api } = setup([
+        requestPayment,
+        say('Cancelled.'),
+        say('There is nothing to confirm.'),
+      ]);
       await agent.handle('Pay 500 dollars for Fall 2026');
       await agent.handle('no');
 
@@ -262,7 +336,9 @@ describe('TuitionAgent', () => {
 
       expect(reply.pendingPayment).toBeNull();
       expect(api.pay).not.toHaveBeenCalled();
-      expect(functionResponses(llm)[0]?.response).toMatchObject({ error: { code: 'AMOUNT_EXCEEDS_BALANCE' } });
+      expect(functionResponses(llm)[0]?.response).toMatchObject({
+        error: { code: 'AMOUNT_EXCEEDS_BALANCE' },
+      });
     });
 
     it.each([
@@ -271,17 +347,91 @@ describe('TuitionAgent', () => {
       [{ term: 'fall', amount: 100 }],
       [{ term: '2026-FALL', amount: '100' }],
     ])('rejects invalid payment arguments %j before reading the balance', async (args) => {
-      const { agent, llm, api } = setup([callTools(['pay_my_tuition', args]), say('Invalid payment.')]);
+      const { agent, llm, api } = setup([
+        callTools(['pay_my_tuition', args]),
+        say('Invalid payment.'),
+      ]);
 
       await agent.handle('pay');
 
       expect(api.getTuition).not.toHaveBeenCalled();
-      expect(functionResponses(llm)[0]?.response).toMatchObject({ error: { code: 'INVALID_ARGUMENT' } });
+      expect(functionResponses(llm)[0]?.response).toMatchObject({
+        error: { code: 'INVALID_ARGUMENT' },
+      });
+    });
+
+    it('still reports a confirmed payment when the LLM fails afterwards', async () => {
+      const failing: Step = () => {
+        throw new Error('Gemini 503');
+      };
+      const { agent, llm, api, traces } = setup([requestPayment, failing, say('Anything else?')]);
+      api.pay.mockResolvedValueOnce({
+        status: 'SUCCESS',
+        transactionId: 'tx-1',
+        term: '2026-FALL',
+        paidAmount: 500,
+        remainingBalance: 1000,
+      });
+      await agent.handle('Pay 500 dollars for Fall 2026');
+
+      const reply = await agent.handle('yes');
+
+      expect(api.pay).toHaveBeenCalledTimes(1);
+      expect(reply.text).toBe(
+        'Your payment of 500.00 USD for 2026-FALL was recorded (transaction ID tx-1). Remaining balance: 1,000.00 USD.',
+      );
+      expect(traces[1]).toMatchObject({
+        confirmation: { decision: 'CONFIRMED' },
+        answer: reply.text,
+      });
+      // The turn stays in the history, so the model knows about the payment in the next turn.
+      await agent.handle('thanks');
+      const history = llm.requests[llm.requests.length - 1];
+      expect(
+        history.some((turn) => turn.role === 'model' && turn.parts?.[0].text === reply.text),
+      ).toBe(true);
+    });
+
+    it('reports a failed payment itself when the LLM also fails', async () => {
+      const failing: Step = () => {
+        throw new Error('Gemini 503');
+      };
+      const { agent, api } = setup([requestPayment, failing]);
+      api.pay.mockRejectedValueOnce(new ApiError(422, 'AMOUNT_EXCEEDS_BALANCE', 'Too much.'));
+      await agent.handle('Pay 500 dollars for Fall 2026');
+
+      const reply = await agent.handle('yes');
+
+      expect(reply.text).toBe(
+        'The payment was not completed (AMOUNT_EXCEEDS_BALANCE): Too much. No money was moved.',
+      );
+    });
+
+    it('rejects a second payment request in the same model response', async () => {
+      const { agent, llm, api } = setup([
+        callTools(
+          ['pay_my_tuition', { term: '2026-FALL', amount: 500 }],
+          ['pay_my_tuition', { term: '2026-FALL', amount: 700 }],
+        ),
+      ]);
+
+      const reply = await agent.handle('Pay 500 and 700 for Fall 2026');
+
+      expect(reply.pendingPayment).toMatchObject({ amount: 500 });
+      expect(api.pay).not.toHaveBeenCalled();
+      expect(llm.requests).toHaveLength(1);
+      const history = agent['history'] as Content[];
+      const responses = history[history.length - 2].parts?.map(
+        (part) => part.functionResponse?.response,
+      );
+      expect(responses?.[1]).toMatchObject({ error: { code: 'PAYMENT_ALREADY_PENDING' } });
     });
 
     it('reports a failed confirmed payment (for example 409) to the LLM and in the trace', async () => {
       const { agent, llm, api, traces } = setup([requestPayment, say('The payment failed.')]);
-      api.pay.mockRejectedValueOnce(new ApiError(409, 'DUPLICATE_TRANSACTION', 'Transaction tx-1 was already used'));
+      api.pay.mockRejectedValueOnce(
+        new ApiError(409, 'DUPLICATE_TRANSACTION', 'Transaction tx-1 was already used'),
+      );
       await agent.handle('Pay 500 dollars for Fall 2026');
 
       await agent.handle('confirm');
@@ -317,13 +467,26 @@ describe('TuitionAgent', () => {
 });
 
 describe('isExplicitConfirmation', () => {
-  it.each(['yes', 'Yes.', 'YES!', 'confirm', 'I confirm', 'evet', 'EVET', 'Onaylıyorum', 'evet, onaylıyorum'])(
-    'accepts "%s"',
-    (reply) => expect(isExplicitConfirmation(reply)).toBe(true),
-  );
+  it.each([
+    'yes',
+    'Yes.',
+    'YES!',
+    'confirm',
+    'I confirm',
+    'evet',
+    'EVET',
+    'Onaylıyorum',
+    'evet, onaylıyorum',
+  ])('accepts "%s"', (reply) => expect(isExplicitConfirmation(reply)).toBe(true));
 
-  it.each(['Can I pay $500?', 'yes but make it 300', 'ok', 'sure', 'no', 'hayır', '', 'yes please pay for 2027-SPRING'])(
-    'rejects "%s"',
-    (reply) => expect(isExplicitConfirmation(reply)).toBe(false),
-  );
+  it.each([
+    'Can I pay $500?',
+    'yes but make it 300',
+    'ok',
+    'sure',
+    'no',
+    'hayır',
+    '',
+    'yes please pay for 2027-SPRING',
+  ])('rejects "%s"', (reply) => expect(isExplicitConfirmation(reply)).toBe(false));
 });

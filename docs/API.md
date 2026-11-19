@@ -213,7 +213,7 @@ Response `200`:
 ```
 `row` is the line number in the file (the header is line 1).
 
-Errors: `400 MISSING_FILE`, `400 INVALID_CSV_HEADER` (also for an empty file), `400 FILE_TOO_LARGE` (over 1 MB or more than 1,000 data rows), `400 VALIDATION_ERROR` (file is not valid CSV, e.g. an unclosed quote).
+Errors: `400 MISSING_FILE` (also when the file is sent in another multipart field), `400 INVALID_CSV_HEADER` (also for an empty file), `400 FILE_TOO_LARGE` (over 1 MB or more than 1,000 data rows), `400 VALIDATION_ERROR` (file is not valid CSV, e.g. an unclosed quote).
 
 ### Unpaid Tuition Status — `GET /api/v1/admin/tuition/unpaid`
 
@@ -275,7 +275,7 @@ Common error codes used by every endpoint:
 
 | Status | `error` | When |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | Request body, path or query fails validation, or contains unknown fields. `message` lists the problems, separated by `; `. |
+| 400 | `VALIDATION_ERROR` | Request body, path or query fails validation, or contains unknown fields. `message` lists the problems, separated by `; `. Also for a body that is not valid JSON or is larger than 100 kB. |
 | 401 | `UNAUTHORIZED` | Missing, invalid or expired token on a protected route |
 | 403 | `FORBIDDEN_ROLE` | Token role is not allowed for the operation |
 | 404 | `NOT_FOUND` | Unknown route |
