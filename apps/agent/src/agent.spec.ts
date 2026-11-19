@@ -18,7 +18,12 @@ function callTools(...calls: [string, Record<string, unknown>][]): Step {
 }
 
 function say(text: string): Step {
-  return () => ({ content: { role: 'model', parts: [{ text }] }, functionCalls: [], text });
+  return () => ({
+    content: { role: 'model', parts: [{ text }] },
+    functionCalls: [],
+    text,
+    usage: { model: 'fake-model', inputTokens: 100, outputTokens: 20 },
+  });
 }
 
 class ScriptedLlm implements LlmClient {
@@ -126,7 +131,16 @@ describe('TuitionAgent', () => {
       expect(traces[0].steps.map((s) => s.tool)).toEqual(['get_my_tuition', 'search_tuition_policies']);
     });
 
-    it('answers directly when the LLM needs no tool', async () => {
+    it('adds up the LLM calls and token use of a turn in the trace', async () => {
+    const { agent, traces } = setup([callTools(['get_my_tuition', {}]), say('Your balance is 1,500.00 USD.')]);
+
+    await agent.handle('balance?');
+
+    // The tool-call response has no usage in this script; the final answer reports 100 in / 20 out.
+    expect(traces[0].llm).toEqual({ calls: 2, models: ['fake-model'], inputTokens: 100, outputTokens: 20 });
+  });
+
+  it('answers directly when the LLM needs no tool', async () => {
       const { agent, api, policy, traces } = setup([say('Hello! How can I help?')]);
 
       expect((await agent.handle('Hi')).text).toBe('Hello! How can I help?');

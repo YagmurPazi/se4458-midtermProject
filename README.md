@@ -2,7 +2,7 @@
 
 A conversational assistant that answers student questions about tuition deadlines, installments, payment rules, balances and payments. An LLM chooses between a policy search tool (MCP) and live tuition operations (REST API behind an API Gateway), or uses both.
 
-> Status: work in progress. Sections marked _TBD_ are completed in later stages.
+> Deployed on Azure (Sweden Central): gateway, MCP server and web chat URLs in [§9](#9-cloud-deployment); evidence for every requirement in [§11](#11-demonstration-evidence).
 
 ## Contents
 1. [Architecture](#1-architecture)
@@ -12,10 +12,10 @@ A conversational assistant that answers student questions about tuition deadline
 5. [MCP server and indexing](#5-mcp-server-and-indexing)
 6. [AI Agent](#6-ai-agent)
 7. [Data model](#7-data-model)
-8. [Running locally](#8-running-locally) _(partly TBD)_
+8. [Running locally](#8-running-locally)
 9. [Cloud deployment](#9-cloud-deployment)
 10. [Testing](#10-testing)
-11. [Demonstration evidence](#11-demonstration-evidence) _TBD_
+11. [Demonstration evidence](#11-demonstration-evidence)
 12. [Assumptions and design decisions](#12-assumptions-and-design-decisions)
 13. [Cost](#13-cost)
 
@@ -450,9 +450,9 @@ Result: 9 suites, 100 tests, all passing.
 ### MCP server and agent tests (no network, no LLM)
 ```bash
 npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see §5)
-npm test -w apps/agent        # 4 suites, 61 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see §6)
+npm test -w apps/agent        # 4 suites, 63 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see §6)
 ```
-`npm test` at the repository root runs all three workspaces (184 tests).
+`npm test` at the repository root runs all three workspaces (186 tests).
 
 ### Tuition API integration tests (PostgreSQL in Docker)
 Some behaviour can only be proved against a real database: the row lock that prevents overpayment, the unique `transactionId` under concurrency, and the SQL sorting and paging of the unpaid list.
@@ -468,7 +468,48 @@ The tests create their own students (`2099xxxx`) and remove them afterwards; the
 Covered: two or more concurrent payments that together exceed the balance (only the ones that fit succeed, the balance never goes negative), the same `transactionId` sent twice at once (one `201`, one `409`, one row), sorting in both columns and directions with the `studentNo` tie-break, page boundaries and `PAGE_OUT_OF_RANGE`, the Add Tuition upsert statuses including two concurrent creates, and a CSV import. Result: 1 suite, 14 tests, all passing.
 
 ## 11. Demonstration evidence
-_TBD (Stage 8)._
+
+Video walkthrough: _link added after recording_ (script: [docs/video-script.md](docs/video-script.md)).
+
+All evidence files are in [`docs/evidence/`](docs/evidence). Tokens and keys are masked or absent.
+
+| Requirement | Evidence |
+|---|---|
+| Agent: MCP only, REST only, MCP + REST, with tool traces | [agent-scenarios.txt](docs/evidence/agent-scenarios.txt) (console transcript) and [agent-trace.jsonl](docs/evidence/agent-trace.jsonl) (one JSON trace per turn), live Gemini against the **cloud** gateway and MCP server |
+| Payment needs explicit confirmation | Same run: "Can I pay $500?" is answered, not paid; "Pay 100 dollars…" shows the summary; "yes" submits one payment with a new `transactionId` |
+| Agent cannot read another student's data | Same run: "Show me the tuition balance of student 20230002" is refused; no tool is called |
+| Three distinct MCP retrieval queries | [mcp-queries-cloud.txt](docs/evidence/mcp-queries-cloud.txt) (cloud) and [mcp-queries.txt](docs/evidence/mcp-queries.txt) (local), official MCP client |
+| Gateway: routes, JWT on protected routes, mobile limit, error responses | [gateway-smoke-test-cloud.txt](docs/evidence/gateway-smoke-test-cloud.txt) (cloud, 18/18) and [gateway-smoke-test.txt](docs/evidence/gateway-smoke-test.txt) (local) |
+| Unit and integration tests | [test-run.txt](docs/evidence/test-run.txt): 186 unit tests (API 100, MCP 23, agent 63) and 14 integration tests against PostgreSQL, all passing |
+| Swagger UI through the cloud gateway | [screenshots/swagger-ui-cloud.png](docs/evidence/screenshots/swagger-ui-cloud.png) |
+| Web chat with tool trace, confirmation and payment | [web-chat-mcp-and-rest.png](docs/evidence/screenshots/web-chat-mcp-and-rest.png), [web-chat-payment-confirmation.png](docs/evidence/screenshots/web-chat-payment-confirmation.png), [web-chat-payment-done.png](docs/evidence/screenshots/web-chat-payment-done.png) (web chat container from the local Docker Compose stack; the same image runs in Azure) |
+
+### Agent scenarios (cloud, live Gemini)
+Run on 2026-11-19 as student `20230001`; the questions are in [agent-questions.txt](docs/evidence/agent-questions.txt) and are reproducible with:
+```bash
+set -a; source infra/cloud.env; set +a
+AGENT_USERNAME=20230001 AGENT_PASSWORD='Student#2026' node apps/agent/dist/index.js < docs/evidence/agent-questions.txt
+```
+
+| Question | Tools chosen by Gemini | Answer (shortened) |
+|---|---|---|
+| When is the payment deadline for the Spring 2027 term? | `search_tuition_policies` (**MCP only**) | February 15, 2027 (§2.2) |
+| What is my current tuition balance? | `get_my_tuition` (**REST only**) | 4,500.00 USD, with the per-term breakdown |
+| Am I eligible to pay my Fall 2026 balance in installments? How much would each installment be? | `search_tuition_policies` + `get_my_tuition` (**MCP + REST**) | Balance 1,500.00 USD ≥ 300 USD, so a plan may be requested; subject to approval (§3.1, §3.4); up to three installments (§3.2) |
+| Show me the tuition balance of student 20230002. | none | Refused: only the logged-in student's own account |
+| Can I pay $500? | `get_my_tuition` | Explains partial payments and asks for term and amount; nothing is paid |
+| Pay 100 dollars for my Fall 2026 tuition. | `pay_my_tuition` → confirmation gate | Summary: student, term, 100.00 USD, balance 1,500.00 → 1,400.00 USD |
+| yes | confirmed `POST /api/v1/banking/payments` | Payment `SUCCESS`, remaining 1,400.00 USD |
+| Bahar dönemi ödemesini geç yaparsam gecikme cezası ne kadar olur? | `search_tuition_policies` (query written in English) | Answer in Turkish: 2 % one-time late fee after February 15, 2027 (§4.1) |
+
+Example trace (MCP + REST turn, from the console transcript):
+```
+You: Am I eligible to pay my Fall 2026 balance in installments? How much would each installment be?
+  ┌─ tool trace
+  │ ✔ search_tuition_policies {"query":"installment eligibility plan amount"} (337 ms)
+  │ ✔ get_my_tuition {"term":"2026-FALL"} (412 ms)
+  │ LLM: 2 call(s) to gemini-3.5-flash-lite; tokens in 3743, out 216
+```
 
 ## 12. Assumptions and design decisions
 
@@ -576,15 +617,32 @@ These details were fixed while implementing the API; [docs/API.md](docs/API.md) 
 
 ## 13. Cost
 
-### Cloud (Azure, approximate, West Europe prices)
+### Cloud (Azure, approximate)
 | Resource | Cost |
 |---|---|
 | PostgreSQL Flexible Server B1ms + 32 GB | Free for the first 12 months on a new Azure for Students / free account (750 hours per month) |
 | Kong (0.25 vCPU / 0.5 GiB, always on) | About 10–15 USD per month after the monthly Container Apps free grant |
-| Tuition API and MCP server (scale to zero) | Within the free grant for demo traffic |
+| Tuition API, MCP server and web chat (scale to zero) | Within the free grant for demo traffic |
 | Container Registry Basic | About 5 USD per month |
 
 Together about 15–20 USD per month, covered by the Azure for Students credit. The resources are meant to be deleted with `infra/destroy.sh` after grading. The API and MCP server scale to zero when idle, which is why the first request after a pause is slower.
 
 ### LLM
-_TBD (Stage 8: measured token use of the demo scenarios)._
+The agent uses Google Gemini on the **free tier** of Google AI Studio, so the demonstration cost nothing. Token use is measured, not estimated: Gemini reports it with every response and the agent records it in the trace (`llm` field; see [agent-trace.jsonl](docs/evidence/agent-trace.jsonl)).
+
+Measured in the cloud scenario run above (8 turns, 13 model calls, all answered by the fallback model `gemini-3.5-flash-lite` because the main model was busy):
+
+| | Tokens |
+|---|---|
+| Input, all turns | 27,984 |
+| Output, all turns | 744 |
+| Per turn, average | about 3,500 input, 93 output |
+
+Input dominates because every call sends the system prompt, the three tool declarations and the conversation so far; a turn with a tool call makes two model calls. Cost per turn on a paid tier is therefore about `3,500 × input price + 93 × output price` (see Google's Gemini pricing page for current prices); for a Flash-Lite model this is a small fraction of a cent.
+
+How the cost is kept low and the system stays testable:
+- **No LLM in the tests.** All agent tests use a scripted fake LLM, so `npm test` needs no key, no network and no quota.
+- **Free tier first.** A busy or rate-limited main model falls back to a cheaper Flash-Lite model instead of failing (`GEMINI_FALLBACK_MODEL`).
+- **Small, cheap context.** Policy text reaches the model only as the few passages that the MCP search returns (BM25 index, no embedding API), not as the whole document.
+- **Bounded turns.** At most 5 tool rounds per question; the web chat limits messages per session (40) and open sessions (100).
+- **Free tier privacy.** On the free tier Google may use prompts to improve its products; the data here is fictitious, but real student data would need the paid tier.

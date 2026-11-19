@@ -18,12 +18,21 @@ export interface ConfirmationRecord {
   currentBalance: number;
 }
 
+/** LLM calls of one turn and their token use (when the LLM reports it). */
+export interface LlmUsageSummary {
+  calls: number;
+  models: string[];
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface TurnTrace {
   timestamp: string;
   studentNo: string;
   user: string;
   steps: TraceStep[];
   confirmation?: ConfirmationRecord;
+  llm?: LlmUsageSummary;
   answer: string;
 }
 
@@ -57,6 +66,10 @@ export class ConsoleFileTrace implements TraceSink {
     if (trace.confirmation) {
       const { decision, term, amount } = trace.confirmation;
       this.print(`  │ confirmation gate: ${decision} (${term}, ${amount.toFixed(2)} USD)`);
+    }
+    if (trace.llm && trace.llm.calls > 0) {
+      const { calls, models, inputTokens, outputTokens } = trace.llm;
+      this.print(`  │ LLM: ${calls} call(s) to ${models.join(', ')}; tokens in ${inputTokens}, out ${outputTokens}`);
     }
     this.print(`  └─ trace saved to ${this.file}`);
     appendFileSync(this.file, `${JSON.stringify(trace)}\n`);

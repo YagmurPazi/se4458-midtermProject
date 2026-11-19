@@ -26,6 +26,7 @@ const textResponse = {
   candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] } }],
   functionCalls: undefined,
   text: 'Hello',
+  usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 30, thoughtsTokenCount: 10 },
 };
 
 const statusError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
@@ -154,6 +155,15 @@ describe('GeminiClient', () => {
 
     await expect(gemini.generate([])).rejects.toThrow('HTTP 404');
     expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports token use per call, counting thinking tokens as output', async () => {
+    const { gemini, generateContent } = client();
+    generateContent.mockResolvedValue(textResponse);
+
+    await expect(gemini.generate([])).resolves.toMatchObject({
+      usage: { model: 'main-model', inputTokens: 120, outputTokens: 40 },
+    });
   });
 
   it('turns an empty answer into a short apology instead of failing', async () => {

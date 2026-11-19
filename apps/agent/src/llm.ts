@@ -2,12 +2,21 @@ import { Content, FunctionCall, FunctionCallingConfigMode, FunctionDeclaration, 
 
 // The agent talks to the LLM only through this interface, so tests can use a scripted fake LLM.
 
+/** Token use of one model call, as reported by the LLM. */
+export interface LlmUsage {
+  model: string;
+  inputTokens: number;
+  /** Answer tokens, including any thinking tokens (billed as output). */
+  outputTokens: number;
+}
+
 export interface LlmResponse {
   /** The model turn, appended to the conversation history as-is. */
   content: Content;
   /** Tools the model asks the agent to run (empty when it answers directly). */
   functionCalls: FunctionCall[];
   text: string;
+  usage?: LlmUsage;
 }
 
 export interface LlmClient {
@@ -113,17 +122,24 @@ export class GeminiClient implements LlmClient {
       },
     });
 
+    const meta = response.usageMetadata;
+    const usage: LlmUsage = {
+      model,
+      inputTokens: meta?.promptTokenCount ?? 0,
+      outputTokens: (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
+    };
+
     const content = response.candidates?.[0]?.content;
     if (!content?.parts?.length) {
       // For example a blocked or empty answer; keep the history valid with a short model turn.
       const text = 'Sorry, I could not produce an answer. Please rephrase your question.';
-      return { content: { role: 'model', parts: [{ text }] }, functionCalls: [], text };
+      return { content: { role: 'model', parts: [{ text }] }, functionCalls: [], text, usage };
     }
     // The text parts are joined here (response.text would warn when the turn also contains function calls).
     const text = content.parts
       .filter((part) => typeof part.text === 'string' && !part.thought)
       .map((part) => part.text)
       .join('');
-    return { content: { ...content, role: 'model' }, functionCalls: response.functionCalls ?? [], text };
+    return { content: { ...content, role: 'model' }, functionCalls: response.functionCalls ?? [], text, usage };
   }
 }

@@ -3,7 +3,7 @@ import { Content, FunctionCall, Part } from '@google/genai';
 import { LlmClient } from './llm';
 import { PolicySearch } from './policy-search';
 import { TOOL_GET_MY_TUITION, TOOL_PAY_MY_TUITION, TOOL_SEARCH_POLICIES } from './tools';
-import { ConfirmationRecord, TraceSink, TraceStep, TurnTrace } from './trace';
+import { ConfirmationRecord, LlmUsageSummary, TraceSink, TraceStep, TurnTrace } from './trace';
 import { ApiError, Session, TuitionApi } from './tuition-api';
 
 // The agent loop: the LLM chooses tools through function calling, the agent runs them and returns the results,
@@ -133,9 +133,10 @@ export class TuitionAgent {
 
     const historyLength = this.history.length;
     this.history.push({ role: 'user', parts });
+    const llm: LlmUsageSummary = { calls: 0, models: [], inputTokens: 0, outputTokens: 0 };
     let text: string;
     try {
-      text = await this.runModel(steps);
+      text = await this.runModel(steps, llm);
     } catch (error) {
       // For example the LLM is unavailable: drop this turn so the conversation history stays valid.
       // A payment confirmed above has already been sent and is not affected.
@@ -154,6 +155,7 @@ export class TuitionAgent {
       user: userText,
       steps,
       ...(confirmation && { confirmation }),
+      llm,
       answer: text,
     };
     this.deps.trace?.record(trace);
@@ -161,9 +163,17 @@ export class TuitionAgent {
   }
 
   /** Calls the LLM, runs the tools it asks for and feeds the results back, until it answers in text. */
-  private async runModel(steps: TraceStep[]): Promise<string> {
+  private async runModel(steps: TraceStep[], llm: LlmUsageSummary): Promise<string> {
     for (let round = 1; ; round++) {
       const response = await this.deps.llm.generate(this.history);
+      llm.calls++;
+      if (response.usage) {
+        llm.inputTokens += response.usage.inputTokens;
+        llm.outputTokens += response.usage.outputTokens;
+        if (!llm.models.includes(response.usage.model)) {
+          llm.models.push(response.usage.model);
+        }
+      }
       this.history.push(response.content);
       if (response.functionCalls.length === 0) {
         return response.text;

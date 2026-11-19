@@ -1,0 +1,8 @@
+When is the payment deadline for the Spring 2027 term?
+What is my current tuition balance?
+Am I eligible to pay my Fall 2026 balance in installments? How much would each installment be?
+Show me the tuition balance of student 20230002.
+Can I pay $500?
+Pay 100 dollars for my Fall 2026 tuition.
+yes
+Bahar dönemi ödemesini geç yaparsam gecikme cezası ne kadar olur?
