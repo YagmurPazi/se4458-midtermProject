@@ -49,7 +49,7 @@ The agent executes all tool calls; the LLM never calls backends. The MCP path do
 | 5 | MCP server: chunking, index, tool, 3 distinct retrieval tests | Done |
 | 6 | Agent: Gemini function-calling loop, confirmation gate, tool trace log, mock-LLM tests | Done (verified live with Gemini) |
 | 7 | Azure deployment scripts in `infra/` | Done: deployed and verified in Azure (swedencentral) |
-| 8 | Evidence + README: 3 agent scenarios, 3 MCP queries, protected route, confirmed payment, test run | Done (video link goes in README section 11) |
+| 8 | Evidence + README: 3 agent scenarios, 3 MCP queries, protected route, confirmed payment, test run | Done (video link in README section 11) |
 | 9 | Independent review against the checklist | Done; findings fixed |
 
 Update this table when a stage finishes.
@@ -84,4 +84,4 @@ Grading: REST + business logic 25 · Agent/LLM tool calling 20 · MCP + indexing
 - [x] Unit tests for all REST operations (≥1 success + ≥1 failure each), checking business logic, validation and responses; runnable without cloud or live LLM; test code, run instructions and evidence in README.
 - [x] ER/data model; server database (not SQLite).
 - [x] API, MCP, gateway and DB deployed on Azure (local deployment costs points). Document LLM cost and a low-cost/testable approach.
-- [ ] README contains everything: source, Swagger/OpenAPI, ER diagram, gateway URL/routes, MCP tool schema + indexing approach, deployment instructions/URLs, assumptions, test data and reproduction steps, screenshots/logs of all demos, short video link. Nothing goes only to Moodle. (Only the video link is still missing.)
+- [x] README contains everything: source, Swagger/OpenAPI, ER diagram, gateway URL/routes, MCP tool schema + indexing approach, deployment instructions/URLs, assumptions, test data and reproduction steps, screenshots/logs of all demos, short video link. Nothing goes only to Moodle.

@@ -494,7 +494,7 @@ Covered: two or more concurrent payments that together exceed the balance (only 
 
 ## 11. Demonstration evidence
 
-Video walkthrough (narrated in Turkish): _link added after recording_.
+Video walkthrough (narrated in Turkish, about 10 minutes): https://youtu.be/lNrAZlmIjUQ
 
 All evidence files are in [`docs/evidence/`](docs/evidence). Tokens and keys are masked or absent.
 
