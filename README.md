@@ -49,7 +49,7 @@ AI Agent orchestrator ───── prompts / tool requests ─────►
 
 ## 3. API
 
-The full contract, with request and response examples and every error code, is in [docs/API.md](docs/API.md). Swagger UI is served at `/api/docs`.
+The full contract, with request and response examples and every error code, is in [docs/API.md](docs/API.md). Swagger UI is served at `/api/docs` (cloud: https://tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io/api/docs).
 
 | Client | Operation | Method and route | Auth | Paging |
 |---|---|---|---|---|
@@ -343,13 +343,13 @@ The seed ([`src/seed/seed-data.ts`](apps/tuition-api/src/seed/seed-data.ts)) is 
 
 ## 8. Running locally
 
-### Full stack with Docker Compose (PostgreSQL, Tuition API, Kong, MCP server)
+### Full stack with Docker Compose (PostgreSQL, Tuition API, Kong, MCP server, web chat)
 ```bash
-cp .env.example .env              # set JWT_SECRET and MCP_API_KEY to long random values
+cp .env.example .env              # set JWT_SECRET and MCP_API_KEY to long random values, GEMINI_API_KEY for the chat
 docker compose up -d --build
 ./gateway/smoke-test.sh
 ```
-The API container applies the database migrations when it starts and loads the demo data on its first start (`SEED_ON_START=true`, only while the database is empty). To reload it later: `docker compose exec tuition-api node dist/seed/seed.js`. The gateway listens on `http://localhost:8000`, Swagger UI is at `http://localhost:8000/api/docs`, and the MCP server on `http://localhost:3001/mcp`.
+The API container applies the database migrations when it starts and loads the demo data on its first start (`SEED_ON_START=true`, only while the database is empty). To reload it later: `docker compose exec tuition-api node dist/seed/seed.js`. The gateway listens on `http://localhost:8000`, Swagger UI is at `http://localhost:8000/api/docs`, the MCP server on `http://localhost:3001/mcp` and the web chat on `http://localhost:8080`. The chat needs a Gemini API key from Google AI Studio (free tier); everything else runs without it.
 
 ### API without Docker (development)
 ```bash
@@ -469,7 +469,7 @@ Covered: two or more concurrent payments that together exceed the balance (only 
 
 ## 11. Demonstration evidence
 
-Video walkthrough: _link added after recording_ (script: [docs/video-script.md](docs/video-script.md)).
+Video walkthrough (narrated in Turkish): _link added after recording_.
 
 All evidence files are in [`docs/evidence/`](docs/evidence). Tokens and keys are masked or absent.
 
@@ -481,6 +481,7 @@ All evidence files are in [`docs/evidence/`](docs/evidence). Tokens and keys are
 | Three distinct MCP retrieval queries | [mcp-queries-cloud.txt](docs/evidence/mcp-queries-cloud.txt) (cloud) and [mcp-queries.txt](docs/evidence/mcp-queries.txt) (local), official MCP client |
 | Gateway: routes, JWT on protected routes, mobile limit, error responses | [gateway-smoke-test-cloud.txt](docs/evidence/gateway-smoke-test-cloud.txt) (cloud, 18/18) and [gateway-smoke-test.txt](docs/evidence/gateway-smoke-test.txt) (local) |
 | Unit and integration tests | [test-run.txt](docs/evidence/test-run.txt): 194 unit tests (API 103, MCP 23, agent 68) and 14 integration tests against PostgreSQL, all passing |
+| Azure deployment (resources, apps, ingress, database) | [azure-resources.txt](docs/evidence/azure-resources.txt), listed with the Azure CLI |
 | Swagger UI through the cloud gateway | [screenshots/swagger-ui-cloud.png](docs/evidence/screenshots/swagger-ui-cloud.png) |
 | Web chat with tool trace, confirmation and payment | [web-chat-mcp-and-rest.png](docs/evidence/screenshots/web-chat-mcp-and-rest.png), [web-chat-payment-confirmation.png](docs/evidence/screenshots/web-chat-payment-confirmation.png), [web-chat-payment-done.png](docs/evidence/screenshots/web-chat-payment-done.png) (web chat container from the local Docker Compose stack; the same image runs in Azure) |
 

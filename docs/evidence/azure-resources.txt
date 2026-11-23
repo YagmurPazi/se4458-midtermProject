@@ -1,0 +1,33 @@
+Azure resources of the deployment, listed with the Azure CLI on 2026-11-23T11:33:37Z
+Subscription: Azure for Students | Resource group: se4458-tuition-rg | Region: Sweden Central
+
+$ az resource list -g se4458-tuition-rg
+Name                           ResourceType                               Location
+-----------------------------  -----------------------------------------  -------------
+tuition-api                    Microsoft.App/containerApps                swedencentral
+tuition-gateway                Microsoft.App/containerApps                swedencentral
+tuition-mcp                    Microsoft.App/containerApps                swedencentral
+tuition-chat                   Microsoft.App/containerApps                swedencentral
+tuition-env                    Microsoft.App/managedEnvironments          swedencentral
+tuitionacr15fa84               Microsoft.ContainerRegistry/registries     swedencentral
+tuition-pg-15fa84              Microsoft.DBforPostgreSQL/flexibleServers  swedencentral
+workspace-se4458tuitionrgPyI7  Microsoft.OperationalInsights/workspaces   swedencentral
+workspace-se4458tuitionrgs1oJ  Microsoft.OperationalInsights/workspaces   swedencentral
+
+$ az containerapp list -g se4458-tuition-rg
+Name             Status    External    Fqdn                                                                       Image
+---------------  --------  ----------  -------------------------------------------------------------------------  -----------------------------------------------------
+tuition-api      Running   False       tuition-api.internal.bluesea-79ab2835.swedencentral.azurecontainerapps.io  tuitionacr15fa84.azurecr.io/tuition-api:6c4f0d6c5ac4
+tuition-gateway  Running   True        tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io       tuitionacr15fa84.azurecr.io/kong-gateway:db388051f0bc
+tuition-mcp      Running   True        tuition-mcp.bluesea-79ab2835.swedencentral.azurecontainerapps.io           tuitionacr15fa84.azurecr.io/mcp-server:f97e737bafe7
+tuition-chat     Running   True        tuition-chat.bluesea-79ab2835.swedencentral.azurecontainerapps.io          tuitionacr15fa84.azurecr.io/chat-web:9ae0a61441a6
+
+$ az containerapp env show -n tuition-env
+Name         Mode              State
+-----------  ----------------  ---------
+tuition-env  WorkloadProfiles  Succeeded
+
+$ az postgres flexible-server show -n tuition-pg-15fa84
+Name               Version    Sku            Tier       State    StorageGb
+-----------------  ---------  -------------  ---------  -------  -----------
+tuition-pg-15fa84  16         Standard_B1ms  Burstable  Ready    32

@@ -9,3 +9,5 @@ logs
 infra/config.env
 infra/.deploy-state.env
 infra/cloud.env
+.claude/agents/
+CLAUDE.local.md
