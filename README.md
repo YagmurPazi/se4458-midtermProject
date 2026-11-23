@@ -2,7 +2,7 @@
 
 A conversational assistant that answers student questions about tuition deadlines, installments, payment rules, balances and payments. An LLM chooses between a policy search tool (MCP) and live tuition operations (REST API behind an API Gateway), or uses both.
 
-> Deployed on Azure (Sweden Central): gateway, MCP server and web chat URLs in [§9](#9-cloud-deployment); evidence for every requirement in [§11](#11-demonstration-evidence).
+> Deployed on Azure (Sweden Central): gateway, MCP server and web chat URLs in [section 9](#9-cloud-deployment); evidence for every requirement in [section 11](#11-demonstration-evidence).
 
 ## Contents
 1. [Architecture](#1-architecture)
@@ -96,7 +96,7 @@ Paths are versioned (`/api/v1`) and forwarded unchanged (`strip_path: false`). E
 - Kong only proves that the token is genuine and not expired. The API checks the token again and enforces role and ownership (`403 FORBIDDEN_ROLE`, `403 FORBIDDEN_STUDENT`).
 
 ### Mobile rate limit
-- `rate-limiting` with `day: 3`, `limit_by: header`, `header_name: X-Student-No`, `policy: local` (see §12.4 for the reasons).
+- `rate-limiting` with `day: 3`, `limit_by: header`, `header_name: X-Student-No`, `policy: local` (see section 12.4 for the reasons).
 - Each student number has its own counter, so one student reaching the limit does not affect others. Every call counts, including errors.
 - Without the header, Kong counts by client IP and the API answers `400 MISSING_STUDENT_NO`.
 
@@ -156,7 +156,7 @@ Input schema:
   "required": ["query"]
 }
 ```
-Output (`structuredContent`, also returned as JSON text), following the format suggested in policy §9:
+Output (`structuredContent`, also returned as JSON text), following the format suggested in policy section 9:
 ```json
 {
   "document": "University_Tuition_Policies.md",
@@ -176,23 +176,23 @@ Output (`structuredContent`, also returned as JSON text), following the format s
 The tool is annotated as read-only. Invalid input (empty query, limit above 5) is returned as a tool error. If nothing matches, `matches` is empty, so the agent can say the policy does not cover the question instead of guessing.
 
 ### Chunking and indexing
-1. **Chunking** ([`policy-chunks.ts`](apps/mcp-server/src/policy-chunks.ts)): the Markdown is split by headings into one chunk per `###` subsection (for example §3.2), or per `##` section when it has no subsections (§1, §9). Each chunk keeps its section number, heading, parent heading and plain text (Markdown emphasis removed). The title block is skipped and the document ID is read from it. The document gives **25 chunks**.
+1. **Chunking** ([`policy-chunks.ts`](apps/mcp-server/src/policy-chunks.ts)): the Markdown is split by headings into one chunk per `###` subsection (for example section 3.2), or per `##` section when it has no subsections (section 1, section 9). Each chunk keeps its section number, heading, parent heading and plain text (Markdown emphasis removed). The title block is skipped and the document ID is read from it. The document gives **25 chunks**.
 2. **Indexing** ([`policy-index.ts`](apps/mcp-server/src/policy-index.ts)): full-text **BM25** search with MiniSearch over the heading, parent heading and text. Headings are boosted (×3, parent ×1.5), common English stop words are ignored, and prefix and fuzzy matching (edit distance 20% of the term length) handle word forms and small typos such as "instalment".
 3. **Build time, not per question** ([`build-index.ts`](apps/mcp-server/src/build-index.ts)): `npm run build` chunks the document and writes the serialized index to `dist/policy-index.json`; the Docker image builds it during `docker build`. The server only loads this file when it starts.
 
 Why full-text search and not embeddings: the document is small and uses the same vocabulary as the questions (deadline, installment, refund, late fee). BM25 is free, needs no external model or API key, and gives deterministic results that unit tests can check. The agent writes the search query itself in English keywords, which also covers questions asked in Turkish.
 
 ### Retrieval tests and evidence
-- [`policy-index.spec.ts`](apps/mcp-server/src/policy-index.spec.ts) checks five distinct topics, each must rank the correct section first: Spring deadline → §2.2, installment eligibility → §3.1, late fee → §4.1, early withdrawal refund → §6.1, duplicate payment → §7.4. It also checks score order, the limit, typo tolerance, empty results and that the index gives identical results after the build-time JSON round trip.
+- [`policy-index.spec.ts`](apps/mcp-server/src/policy-index.spec.ts) checks five distinct topics, each must rank the correct section first: Spring deadline → section 2.2, installment eligibility → section 3.1, late fee → section 4.1, early withdrawal refund → section 6.1, duplicate payment → section 7.4. It also checks score order, the limit, typo tolerance, empty results and that the index gives identical results after the build-time JSON round trip.
 - [`policy-chunks.spec.ts`](apps/mcp-server/src/policy-chunks.spec.ts) checks the 25 chunks and their section numbers, headings and parents.
 - [`http-app.spec.ts`](apps/mcp-server/src/http-app.spec.ts) runs the server on localhost and uses the official MCP client: `tools/list`, `tools/call`, invalid arguments, wrong or missing API key (`401`), health and `405` for `GET /mcp`.
 - Three queries against the running container with the MCP client (`npm run demo -w apps/mcp-server`): [docs/evidence/mcp-queries.txt](docs/evidence/mcp-queries.txt).
 
 | Query | Top sections returned |
 |---|---|
-| `fall tuition payment deadline` | §8.1 (FAQ: Fall deadline), §2.1 Fall term |
-| `installment eligibility and number of installments` | §3.2 Number and size of installments, §3.1 Eligibility |
-| `refund after withdrawal from the term` | §6.1 Early withdrawal, §6.2 Later withdrawal |
+| `fall tuition payment deadline` | section 8.1 (FAQ: Fall deadline), section 2.1 Fall term |
+| `installment eligibility and number of installments` | section 3.2 Number and size of installments, section 3.1 Eligibility |
+| `refund after withdrawal from the term` | section 6.1 Early withdrawal, section 6.2 Later withdrawal |
 
 ## 6. AI Agent
 
@@ -226,7 +226,7 @@ The same agent also runs behind a small web page ([`chat-server.ts`](apps/agent/
 ### Tools given to Gemini
 | Tool | Parameters | Executed by the agent as |
 |---|---|---|
-| `search_tuition_policies` | `query` (English keywords), `limit?` | MCP `tools/call` on the MCP server (§5) |
+| `search_tuition_policies` | `query` (English keywords), `limit?` | MCP `tools/call` on the MCP server (section 5) |
 | `get_my_tuition` | `term?` | `GET /api/v1/banking/tuition/{studentNo}` through Kong |
 | `pay_my_tuition` | `term`, `amount` | Nothing at first: starts the confirmation gate (below) |
 
@@ -236,7 +236,7 @@ The same agent also runs behind a small web page ([`chat-server.ts`](apps/agent/
 
 ### Payment confirmation is enforced in code
 1. When Gemini calls `pay_my_tuition`, the agent validates the term and the amount (positive, at most 2 decimals) and reads the live balance. An amount above the balance is rejected at once.
-2. The agent does **not** call the payment API. It shows a fixed summary (policy §7.3) and ends the turn:
+2. The agent does **not** call the payment API. It shows a fixed summary (policy section 7.3) and ends the turn:
    ```
    Please confirm this payment / Lütfen bu ödemeyi onaylayın:
      Student:         20230001 (logged-in user)
@@ -245,7 +245,7 @@ The same agent also runs behind a small web page ([`chat-server.ts`](apps/agent/
      Current balance: 1,500.00 USD (after payment: 1,000.00 USD)
    Reply "yes" or "confirm" ("evet" / "onaylıyorum") to submit it. Any other reply cancels it.
    ```
-3. The user's **next** message decides, in code and before Gemini sees it: only an exact confirmation (`yes`, `confirm`, `I confirm`, `evet`, `onaylıyorum`, …) submits the payment, with a new UUID as `transactionId` (the idempotency key, policy §7.4). Any other reply, such as "Can I pay $500?", cancels it.
+3. The user's **next** message decides, in code and before Gemini sees it: only an exact confirmation (`yes`, `confirm`, `I confirm`, `evet`, `onaylıyorum`, …) submits the payment, with a new UUID as `transactionId` (the idempotency key, policy section 7.4). Any other reply, such as "Can I pay $500?", cancels it.
 4. Gemini receives the real API result and the system prompt tells it to report success only if the result says `SUCCESS`.
 
 ### System prompt
@@ -337,7 +337,7 @@ The seed ([`src/seed/seed-data.ts`](apps/tuition-api/src/seed/seed-data.ts)) is 
 | `20230002` Can Öztürk | 2026-FALL $2,500 (fully paid by the bank), 2027-SPRING $2,500 (unpaid) | Second student for the cross-student access demo |
 | `20230003` Deniz Kaya | 2026-FALL $3,000 (unpaid) | Unpaid list |
 | `20230004` Zeynep Arslan | 2026-FALL $2,800 (fully paid in two payments) | Not in the unpaid list |
-| `20230005` Mert Çelik | 2026-FALL $3,000 (paid $2,750, balance $250) | Balance below the $300 installment threshold (policy §3.1) |
+| `20230005` Mert Çelik | 2026-FALL $3,000 (paid $2,750, balance $250) | Balance below the $300 installment threshold (policy section 3.1) |
 | `20230006`–`20230024` | 2026-FALL $2,500–$3,500, some partly paid | Paging: 22 unpaid students in 2026-FALL, so the default page size of 20 gives two pages |
 | `20230025` Efe Turan | none | `TUITION_NOT_FOUND` cases |
 
@@ -385,7 +385,7 @@ Agent (local) ──HTTPS──► Kong gateway (external, 1 replica) ──HTTP
 | Component | Azure resource | Settings |
 |---|---|---|
 | Tuition API | Container App `tuition-api` | **Internal ingress only**: reachable from Kong, not from the internet. 0.5 vCPU / 1 GiB, scales 0–2. Applies migrations (and the first seed) on start |
-| API gateway | Container App `tuition-gateway` (Kong image from `gateway/Dockerfile`) | External HTTPS ingress, **exactly 1 replica** so the in-memory mobile rate-limit counters are exact (§12.4). 0.25 vCPU / 0.5 GiB |
+| API gateway | Container App `tuition-gateway` (Kong image from `gateway/Dockerfile`) | External HTTPS ingress, **exactly 1 replica** so the in-memory mobile rate-limit counters are exact (section 12.4). 0.25 vCPU / 0.5 GiB |
 | MCP server | Container App `tuition-mcp` | External HTTPS ingress, `x-api-key`; not behind the gateway. 0.25 vCPU / 0.5 GiB, scales 0–2 |
 | Web chat | Container App `tuition-chat` | External HTTPS ingress; runs the agent, calls Kong and the MCP server like the CLI. Gemini key as a secret, read from the local `.env` by `deploy.sh` (skipped if missing). 0.25 vCPU / 0.5 GiB, scales 0–1 |
 | Database | Azure Database for PostgreSQL Flexible Server | Burstable B1ms, PostgreSQL 16, 32 GB, TLS required, reachable from Azure services only |
@@ -449,8 +449,8 @@ Result: 9 suites, 103 tests, all passing.
 
 ### MCP server and agent tests (no network, no LLM)
 ```bash
-npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see §5)
-npm test -w apps/agent        # 4 suites, 68 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see §6)
+npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see section 5)
+npm test -w apps/agent        # 4 suites, 68 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see section 6)
 ```
 `npm test` at the repository root runs all three workspaces (194 tests).
 
@@ -554,8 +554,8 @@ You: Am I eligible to pay my Fall 2026 balance in installments? How much would e
 - Amounts are positive, have at most 2 decimal places and are stored as `NUMERIC(12,2)`. Inputs with more than 2 decimals are rejected rather than rounded, so no rounding happens in the API.
 - **Balance = tuition amount − sum of recorded payments.** The balance is calculated, not stored, so it cannot drift out of sync.
 - Query Tuition supports both scopes: with `term` it returns that term; without it, the overall total with a per-term breakdown.
-- Tuition amounts are recorded **after** any scholarship or adjustment. Scholarships are not modelled separately. Following policy §5.2, the assistant explains the 25% rule but never claims that a particular student has a scholarship.
-- Late fees are **not** calculated or posted (policy §4.1). The assistant may explain the 2% rule but does not add fees to balances.
+- Tuition amounts are recorded **after** any scholarship or adjustment. Scholarships are not modelled separately. Following policy section 5.2, the assistant explains the 25% rule but never claims that a particular student has a scholarship.
+- Late fees are **not** calculated or posted (policy section 4.1). The assistant may explain the 2% rule but does not add fees to balances.
 - Terms use the policy format `YYYY-FALL`, `YYYY-SPRING`, `YYYY-SUMMER`.
 
 ### 12.6 Add Tuition and batch import
@@ -569,10 +569,10 @@ You: Am I eligible to pay my Fall 2026 balance in installments? How much would e
 
 ### 12.7 Payments
 - Payments are **simulated**. No real money or card processing.
-- Partial and full payments are allowed. The amount must be positive and must not exceed the remaining balance (policy §7.2). Overpayment is not supported.
-- `transactionId` is the idempotency key (policy §7.4). A repeated `transactionId` is rejected with `409` and no second record is created; the original payment is returned only to the student it belongs to (see §12.12).
+- Partial and full payments are allowed. The amount must be positive and must not exceed the remaining balance (policy section 7.2). Overpayment is not supported.
+- `transactionId` is the idempotency key (policy section 7.4). A repeated `transactionId` is rejected with `409` and no second record is created; the original payment is returned only to the student it belongs to (see section 12.12).
 - The tuition row is locked during a payment, so concurrent payments cannot overpay.
-- A partial payment is **not** an installment approval (policy §3.4). The API has no installment-approval operation, and the assistant does not promise approval.
+- A partial payment is **not** an installment approval (policy section 3.4). The API has no installment-approval operation, and the assistant does not promise approval.
 
 ### 12.8 Unpaid Tuition Status
 - Lists students with **balance > 0** for the given term, so partially paid students are included.
@@ -584,21 +584,21 @@ You: Am I eligible to pay my Fall 2026 balance in installments? How much would e
 ### 12.9 AI Agent behaviour
 - Tool selection is done by the LLM through real function calling. There is no keyword routing.
 - Agent tools: `search_tuition_policies(query)` (MCP), `get_my_tuition(term?)` (REST via gateway) and `pay_my_tuition(term, amount)` (REST via gateway).
-- **Payment confirmation is enforced in code, not only in the prompt.** When the LLM requests a payment, the agent does not call the API. It shows the student, term, amount and current balance (policy §7.3) and waits. The payment is submitted only if the user's next message is an explicit confirmation (`yes` / `confirm`). Anything else cancels it. A question such as "Can I pay $500?" is never treated as authorization.
-- The agent generates the `transactionId` (UUID) when the user confirms and reports success only after the API returns success (policy §7.4).
+- **Payment confirmation is enforced in code, not only in the prompt.** When the LLM requests a payment, the agent does not call the API. It shows the student, term, amount and current balance (policy section 7.3) and waits. The payment is submitted only if the user's next message is an explicit confirmation (`yes` / `confirm`). Anything else cancels it. A question such as "Can I pay $500?" is never treated as authorization.
+- The agent generates the `transactionId` (UUID) when the user confirms and reports success only after the API returns success (policy section 7.4).
 - Answers that use the policy cite section numbers (for example "§3.2").
 - The assistant answers in the user's language; code and documentation are in English.
 - Every turn writes a tool trace (tool name, input, result, final answer) to the console and to a JSON log file.
 
 ### 12.10 Policy interpretation
-- Deadlines are in the university's local time zone (policy §2.2); this project uses `Europe/Istanbul`.
-- Installment eligibility (balance of at least $300, up to three installments, policy §3) is explained by the assistant using the live balance plus the policy text. The assistant states that an arrangement is **subject to approval** and never confirms approval.
-- Refund questions are answered from policy §6, and the user is directed to the finance office for decisions.
+- Deadlines are in the university's local time zone (policy section 2.2); this project uses `Europe/Istanbul`.
+- Installment eligibility (balance of at least $300, up to three installments, policy section 3) is explained by the assistant using the live balance plus the policy text. The assistant states that an arrangement is **subject to approval** and never confirms approval.
+- Refund questions are answered from policy section 6, and the user is directed to the finance office for decisions.
 
 ### 12.11 MCP server
 - The document is split by Markdown headings into one chunk per `###` subsection (or per `##` section when it has no subsections). Each chunk keeps its section ID, heading and parent heading.
 - The index is built once at build time and loaded at startup. It is not rebuilt per question.
-- `search_tuition_policies(query)` returns the top matches with `document`, `documentId`, `section`, `heading` and `text`, following the format suggested in policy §9.
+- `search_tuition_policies(query)` returns the top matches with `document`, `documentId`, `section`, `heading` and `text`, following the format suggested in policy section 9.
 - The MCP endpoint does not go through the API Gateway, as the assignment specifies. It is protected with a shared API key header.
 
 ### 12.12 Errors, validation and edge cases

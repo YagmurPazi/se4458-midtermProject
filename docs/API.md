@@ -6,7 +6,7 @@ All operations are exposed **only through the API Gateway (Kong)**. Clients, inc
 - Versioning: URI versioning (`/api/v1/...`). A breaking change ships as `/api/v2/...` while v1 keeps running.
 - Format: JSON (`application/json`), except the batch upload, which takes `multipart/form-data`.
 - Money: decimal numbers with at most 2 fraction digits, stored as `NUMERIC(12,2)`. Currency is `USD` (see Assumptions).
-- Term format: `YYYY-FALL`, `YYYY-SPRING` or `YYYY-SUMMER` (for example `2026-FALL`), as in the policy document §1.
+- Term format: `YYYY-FALL`, `YYYY-SPRING` or `YYYY-SUMMER` (for example `2026-FALL`), as in the policy document section 1.
 - Interactive documentation: Swagger UI at `/api/docs` (OpenAPI JSON at `/api/docs-json`).
 
 ## Clients, roles and access
