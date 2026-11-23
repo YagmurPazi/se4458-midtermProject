@@ -36,6 +36,14 @@ AI Agent orchestrator ───── prompts / tool requests ─────►
 - The **MCP path** (policy documentation) and the **gateway path** (live records and transactions) are separate.
 - The policy document is indexed **once, at build time**, not for every question.
 
+### How a question is answered (agent loop)
+1. The agent sends the user's question, the conversation so far and the three tool declarations to Gemini.
+2. Gemini answers either with text or with one or more **function calls** (tool name and arguments). It chooses the tools itself; there is no keyword routing.
+3. The agent validates each call and executes it: `search_tuition_policies` through the MCP client, `get_my_tuition` and the payment through Kong with the student's JWT. A payment first goes through the confirmation gate (section 6).
+4. The agent sends the tool results back to Gemini as function responses.
+5. Steps 2 to 4 repeat (at most 5 rounds) until Gemini writes the final answer, grounded in the tool results and citing policy sections.
+6. The agent records the turn in the tool trace: tools, inputs, results, confirmation decision and token use.
+
 ### Technology stack
 | Part | Technologies |
 |---|---|
@@ -211,7 +219,7 @@ Why full-text search and not embeddings: the document is small and uses the same
 
 ## 6. AI Agent
 
-A command-line chat agent ([`apps/agent`](apps/agent)) that uses **Google Gemini with real function calling**. Gemini decides which tools to use; the agent runs every tool itself and sends the results back to Gemini, which writes the final answer. There is no keyword routing, and the LLM never calls a backend.
+The chat agent ([`apps/agent`](apps/agent)), available as a command-line chat and as a web chat, uses **Google Gemini with real function calling**. Gemini decides which tools to use; the agent runs every tool itself and sends the results back to Gemini, which writes the final answer. There is no keyword routing, and the LLM never calls a backend.
 
 ```
 Student ──► CLI ──► Agent loop ──► Gemini (function calling)
