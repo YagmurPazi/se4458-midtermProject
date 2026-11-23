@@ -257,7 +257,7 @@ if [[ "$DEPLOY_CHAT" == true ]]; then
     MCP_API_KEY=secretref:mcp-api-key
     GEMINI_API_KEY=secretref:gemini-api-key
     "GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}"
-    "GEMINI_FALLBACK_MODEL=${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash-lite}"
+    "GEMINI_FALLBACK_MODEL=${GEMINI_FALLBACK_MODEL:-gemini-3.6-flash,gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite}"
   )
   if app_exists "$CHAT_APP"; then
     az containerapp secret set -g "$RESOURCE_GROUP" -n "$CHAT_APP" --secrets "${CHAT_SECRETS[@]}" -o none

@@ -44,6 +44,16 @@
     form.composer { display: flex; gap: 8px; padding: 12px 0 20px; position: sticky; bottom: 0; background: var(--bg); }
     form.composer textarea { resize: none; height: 44px; }
     .hint { color: var(--muted); font-size: 13px; text-align: center; padding-bottom: 8px; }
+    .msg.welcome { align-self: stretch; max-width: none; background: var(--user); border: 1px solid var(--border); }
+    .msg.welcome strong { font-size: 16px; }
+    #suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0 8px; }
+    #suggestions[hidden] { display: none; }
+    #suggestions .label { color: var(--muted); font-size: 13px; margin-right: 4px; }
+    button.chip { background: var(--panel); color: var(--accent); border: 1px solid var(--accent); border-radius: 999px;
+      padding: 6px 12px; font-size: 13px; text-align: left; }
+    button.chip:hover { background: var(--user); }
+    .notice { background: var(--warn-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+    .notice a { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -59,10 +69,12 @@
     <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
     <button type="submit">Log in</button>
     <div class="error" id="login-error"></div>
+    <div class="notice" id="staff-notice" hidden></div>
   </form>
 
   <section id="chat">
     <div id="log"></div>
+    <div id="suggestions" hidden></div>
     <div class="hint">Ask about deadlines, installments, refunds or your balance. Every answer shows the tools the assistant used.</div>
     <form class="composer" id="composer">
       <textarea id="message" placeholder="Type your question…" maxlength="1000"></textarea>
@@ -109,6 +121,49 @@
     return `<details><summary>Tool trace: ${tools}${decision}</summary>${items}${gate}</details>`;
   }
 
+  // Example questions (the assignment's example conversations) and follow-ups chosen by the tools the
+  // last answer used. They are only suggestions in the page; the LLM still decides which tools to call.
+  const PAY_EXAMPLE = 'Pay part of my balance: 500 dollars for Fall 2026.';
+  const SUGGESTIONS = {
+    start: ['When is the payment deadline?', 'What is my balance?', 'Can I pay my outstanding balance in installments?', PAY_EXAMPLE],
+    policy: ['What is my balance?', 'Can I pay my outstanding balance in installments?', 'How much is the late fee?'],
+    balance: ['Can I pay my outstanding balance in installments?', 'When is the payment deadline?', PAY_EXAMPLE],
+    both: [PAY_EXAMPLE, 'What happens if I pay after the deadline?', 'Can I get a refund if I withdraw?'],
+    paid: ['What is my balance?', 'When will my payment show on my balance?'],
+  };
+
+  function showSuggestions(list, label, exclude) {
+    const box = $('suggestions');
+    const items = list.filter((text) => text !== exclude);
+    box.innerHTML = '';
+    box.hidden = items.length === 0;
+    if (box.hidden) return;
+    const caption = document.createElement('span');
+    caption.className = 'label';
+    caption.textContent = label;
+    box.appendChild(caption);
+    for (const text of items) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.textContent = text;
+      chip.onclick = () => { if (!$('send').disabled) send(text); };
+      box.appendChild(chip);
+    }
+  }
+
+  function followUps(data) {
+    if (data.pendingPayment) return [];
+    if (data.confirmation && data.confirmation.decision === 'CONFIRMED') return SUGGESTIONS.paid;
+    const tools = data.steps.map((s) => s.tool.split(' ')[0]);
+    const policy = tools.includes('search_tuition_policies');
+    const balance = tools.includes('get_my_tuition');
+    if (policy && balance) return SUGGESTIONS.both;
+    if (policy) return SUGGESTIONS.policy;
+    if (balance) return SUGGESTIONS.balance;
+    return SUGGESTIONS.start;
+  }
+
   async function call(path, body) {
     const res = await fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
@@ -119,15 +174,21 @@
     return { ok: res.ok, status: res.status, data };
   }
 
-  function showChat(studentNo) {
+  function showChat(studentNo, again = false) {
     $('login').style.display = 'none';
     $('chat').style.display = 'flex';
     $('who').textContent = `Student ${studentNo}`;
     $('logout').hidden = false;
+    add('welcome',
+      `<strong>Welcome${again ? ' back' : ''}, student ${escapeHtml(studentNo)}!</strong><br>` +
+      'I can answer questions about tuition deadlines, installments, late fees and refunds from the university policy, ' +
+      'and show or pay your own tuition. Every answer shows the tools I used.');
+    showSuggestions(SUGGESTIONS.start, 'Try asking:');
     $('message').focus();
   }
 
   async function send(text) {
+    $('suggestions').hidden = true;
     add('user', escapeHtml(text));
     $('send').disabled = true;
     const waiting = add('system', 'Thinking…');
@@ -140,6 +201,7 @@
     }
     if (!ok) {
       add('system', escapeHtml(data.message || 'Something went wrong.'));
+      showSuggestions(SUGGESTIONS.start, 'Try asking:');
       return;
     }
     const div = add(data.pendingPayment ? 'assistant confirm' : 'assistant', format(data.reply) + traceHtml(data.steps, data.confirmation));
@@ -154,19 +216,35 @@
       no.onclick = () => answer('cancel');
       div.appendChild(actions);
     }
+    showSuggestions(followUps(data), 'You might also ask:', text);
   }
 
   $('login').addEventListener('submit', async (event) => {
     event.preventDefault();
     $('login-error').textContent = '';
+    $('staff-notice').hidden = true;
     const { ok, data } = await call('/api/login', { username: $('username').value, password: $('password').value });
     $('password').value = '';
+    if (!ok && data.error === 'NOT_A_STUDENT') {
+      // Admin and bank accounts are greeted and pointed to the API instead of the student chat.
+      const notice = $('staff-notice');
+      notice.textContent = data.message;
+      if (typeof data.swaggerUrl === 'string' && /^https?:\/\//.test(data.swaggerUrl)) {
+        const link = document.createElement('a');
+        link.href = data.swaggerUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'Open Swagger UI';
+        notice.append(' ', link);
+      }
+      notice.hidden = false;
+      return;
+    }
     if (!ok) {
       $('login-error').textContent = data.message || 'Login failed.';
       return;
     }
     showChat(data.studentNo);
-    add('system', 'Logged in. Your questions are answered with the university policy and your live tuition record.');
   });
 
   $('composer').addEventListener('submit', (event) => {
@@ -190,7 +268,7 @@
     location.reload();
   });
 
-  call('/api/session').then(({ ok, data }) => ok && showChat(data.studentNo));
+  call('/api/session').then(({ ok, data }) => ok && showChat(data.studentNo, true));
 </script>
 </body>
 </html>

@@ -36,6 +36,21 @@ AI Agent orchestrator ───── prompts / tool requests ─────►
 - The **MCP path** (policy documentation) and the **gateway path** (live records and transactions) are separate.
 - The policy document is indexed **once, at build time**, not for every question.
 
+### Technology stack
+| Part | Technologies |
+|---|---|
+| Language and runtime | TypeScript 5.9 (strict), Node.js 22, npm workspaces monorepo |
+| Tuition REST API | NestJS 11, class-validator (input validation), `@nestjs/swagger` (OpenAPI and Swagger UI), Passport JWT (HS256 tokens) |
+| Database | PostgreSQL 16 with Prisma 6 (schema, migrations, type-safe queries) |
+| API Gateway | Kong Gateway OSS 3.9, DB-less declarative config, `jwt` and `rate-limiting` plugins |
+| MCP server | Official MCP TypeScript SDK 1.32 (Streamable HTTP and stdio), MiniSearch 7 (BM25 full-text index), Express 5 |
+| AI agent | Google Gen AI SDK 1.52 with Gemini function calling (`gemini-3.8-flash` and Flash-Lite fallbacks), MCP client from the same SDK |
+| Web chat | Express 5 server and a plain HTML/JavaScript page (no framework) |
+| Tests | Jest 29, Supertest; agent tests use a scripted fake LLM |
+| Cloud and tooling | Azure Container Apps, Azure Database for PostgreSQL Flexible Server, Azure Container Registry, Azure CLI scripts (`infra/`), Docker and Docker Compose |
+
+Why each technology was chosen is explained in section 12.1.
+
 ## 2. Repository layout
 
 | Path | Contents |
@@ -43,7 +58,7 @@ AI Agent orchestrator ───── prompts / tool requests ─────►
 | `apps/tuition-api` | NestJS REST API, Prisma schema and migrations, unit tests |
 | `apps/mcp-server` | MCP server, policy indexer, `search_tuition_policies` tool |
 | `apps/agent` | Chat agent (Gemini + MCP client + REST client), as a CLI and as a web chat server with a static page |
-| `gateway/` | Kong declarative configuration |
+| `gateway/` | Kong declarative configuration, Kong image and the gateway smoke test |
 | `infra/` | Azure deployment scripts |
 | `docs/` | API contract, ER diagram, screenshots and tool traces |
 
@@ -213,13 +228,15 @@ npm run build -w apps/agent
 npm run start -w apps/agent        # CLI: asks for student number and password
 npm run start:web -w apps/agent    # web chat on http://localhost:8080
 ```
-Configuration (from `.env`): `GATEWAY_URL`, `MCP_URL`, `MCP_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`), `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`, used when the main model is busy: `429`/`503` are retried once on the same model, a `504` or a second failure moves to the fallback at once, requests have a 25 s deadline, and a busy model is skipped for 5 minutes) and optionally `AGENT_TRACE_FILE` (default `logs/agent-trace.jsonl`). For scripted demos the login can be given as `AGENT_USERNAME` / `AGENT_PASSWORD`.
+Configuration (from `.env`): `GATEWAY_URL`, `MCP_URL`, `MCP_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`), `GEMINI_FALLBACK_MODEL` (default `gemini-3.6-flash,gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite`: tried in order when the main model is busy; a `503` (overloaded) or `504` (deadline) moves to the next model at once, a `429` is retried once on the same model, requests have a 35 s deadline, and a busy model is skipped for 5 minutes) and optionally `AGENT_TRACE_FILE` (default `logs/agent-trace.jsonl`). For scripted demos the login can be given as `AGENT_USERNAME` / `AGENT_PASSWORD`.
 
 ### Web chat
 The same agent also runs behind a small web page ([`chat-server.ts`](apps/agent/src/chat-server.ts), [`public/index.html`](apps/agent/public/index.html)), served by its own container (`docker compose` service `chat` at `http://localhost:8080`, Azure Container App `tuition-chat`).
 - The browser only talks to this server. The JWT, the Gemini key and the MCP key stay on the server; the page gets an HttpOnly, SameSite=Strict session cookie.
 - Each login gets its own `TuitionAgent` (own history and pending payment), kept in memory for 30 minutes of inactivity; the app therefore runs as one replica. Limits protect the free Gemini quota: 40 messages per session, 100 open sessions, 1,000 characters per message.
 - Every answer shows a collapsible tool trace (tool, input, result, confirmation decision); the full trace also goes to the container log as one JSON line per turn.
+- After login the page greets the student and offers the assignment's example questions as buttons (`When is the payment deadline?`, `What is my balance?`, `Can I pay my outstanding balance in installments?`, `Pay part of my balance: …`). After each answer it suggests follow-up questions that fit the tools just used (for example the balance after a policy answer). The suggestions are only part of the page: Gemini still chooses the tools for every question.
+- `ADMIN` and `BANK` accounts are greeted by role ("Welcome, admin!") and pointed to Swagger UI; the chat itself stays student-only, because every agent tool acts on the logged-in student's own record.
 - A payment summary comes with **Confirm payment** and **Cancel** buttons. They only send "yes" or "cancel" as the next message, so the confirmation gate in the agent decides, exactly as in the CLI.
 - Endpoints: `POST /api/login`, `GET /api/session`, `POST /api/chat`, `POST /api/logout`, `GET /health`. Tested in [`chat-server.spec.ts`](apps/agent/src/chat-server.spec.ts) with a fake API and fake agents.
 
@@ -450,9 +467,9 @@ Result: 9 suites, 103 tests, all passing.
 ### MCP server and agent tests (no network, no LLM)
 ```bash
 npm test -w apps/mcp-server   # 3 suites, 23 tests: chunking, retrieval of five topics, MCP over HTTP (see section 5)
-npm test -w apps/agent        # 4 suites, 68 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see section 6)
+npm test -w apps/agent        # 4 suites, 69 tests: fake-LLM agent scenarios, confirmation gate, Gemini client, web chat server (see section 6)
 ```
-`npm test` at the repository root runs all three workspaces (194 tests).
+`npm test` at the repository root runs all three workspaces (195 tests).
 
 ### Tuition API integration tests (PostgreSQL in Docker)
 Some behaviour can only be proved against a real database: the row lock that prevents overpayment, the unique `transactionId` under concurrency, and the SQL sorting and paging of the unpaid list.
@@ -480,7 +497,7 @@ All evidence files are in [`docs/evidence/`](docs/evidence). Tokens and keys are
 | Agent cannot read another student's data | Same run: "Show me the tuition balance of student 20230002" is refused; no tool is called |
 | Three distinct MCP retrieval queries | [mcp-queries-cloud.txt](docs/evidence/mcp-queries-cloud.txt) (cloud) and [mcp-queries.txt](docs/evidence/mcp-queries.txt) (local), official MCP client |
 | Gateway: routes, JWT on protected routes, mobile limit, error responses | [gateway-smoke-test-cloud.txt](docs/evidence/gateway-smoke-test-cloud.txt) (cloud, 18/18) and [gateway-smoke-test.txt](docs/evidence/gateway-smoke-test.txt) (local) |
-| Unit and integration tests | [test-run.txt](docs/evidence/test-run.txt): 194 unit tests (API 103, MCP 23, agent 68) and 14 integration tests against PostgreSQL, all passing |
+| Unit and integration tests | [test-run.txt](docs/evidence/test-run.txt): 195 unit tests (API 103, MCP 23, agent 69) and 14 integration tests against PostgreSQL, all passing |
 | Azure deployment (resources, apps, ingress, database) | [azure-resources.txt](docs/evidence/azure-resources.txt), listed with the Azure CLI |
 | Swagger UI through the cloud gateway | [screenshots/swagger-ui-cloud.png](docs/evidence/screenshots/swagger-ui-cloud.png) |
 | Web chat with tool trace, confirmation and payment | [web-chat-mcp-and-rest.png](docs/evidence/screenshots/web-chat-mcp-and-rest.png), [web-chat-payment-confirmation.png](docs/evidence/screenshots/web-chat-payment-confirmation.png), [web-chat-payment-done.png](docs/evidence/screenshots/web-chat-payment-done.png) (web chat container from the local Docker Compose stack; the same image runs in Azure) |

@@ -32,7 +32,7 @@ export function loadConfig(): AgentConfig {
     mcpApiKey: required('MCP_API_KEY'),
     geminiApiKey: required('GEMINI_API_KEY'),
     geminiModel: process.env.GEMINI_MODEL ?? 'gemini-3.8-flash',
-    geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL ?? 'gemini-3.5-flash-lite',
+    geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL ?? 'gemini-3.6-flash,gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite',
     traceFile: process.env.AGENT_TRACE_FILE ?? resolve(process.cwd(), 'logs', 'agent-trace.jsonl'),
   };
 }

@@ -54,25 +54,23 @@ describe('GeminiClient', () => {
     );
   });
 
-  it('retries a temporary error (503) once on the same model', async () => {
+  it('retries a rate-limit error (429) once on the same model', async () => {
     const { gemini, generateContent, sleep } = client('backup-model');
-    generateContent.mockRejectedValueOnce(statusError(503)).mockResolvedValueOnce(textResponse);
+    generateContent.mockRejectedValueOnce(statusError(429)).mockResolvedValueOnce(textResponse);
 
     await expect(gemini.generate([])).resolves.toMatchObject({ text: 'Hello' });
     expect(modelsCalled(generateContent)).toEqual(['main-model', 'main-model']);
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
-  it('switches to the fallback model when the main model stays busy', async () => {
-    const { gemini, generateContent, warn } = client('backup-model');
-    generateContent
-      .mockRejectedValueOnce(statusError(503))
-      .mockRejectedValueOnce(statusError(503))
-      .mockResolvedValueOnce(textResponse);
+  it('switches to the fallback model at once when the main model is overloaded (503)', async () => {
+    const { gemini, generateContent, warn, sleep } = client('backup-model');
+    generateContent.mockRejectedValueOnce(statusError(503)).mockResolvedValueOnce(textResponse);
 
     await expect(gemini.generate([])).resolves.toMatchObject({ text: 'Hello' });
-    expect(modelsCalled(generateContent)).toEqual(['main-model', 'main-model', 'backup-model']);
+    expect(modelsCalled(generateContent)).toEqual(['main-model', 'backup-model']);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('using backup-model'));
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it('moves to the fallback model at once after a 504 deadline error (no slow retry)', async () => {
@@ -125,20 +123,35 @@ describe('GeminiClient', () => {
 
   it('skips a busy main model for the next requests (cooldown)', async () => {
     const { gemini, generateContent } = client('backup-model');
-    generateContent
-      .mockRejectedValueOnce(statusError(503))
-      .mockRejectedValueOnce(statusError(503))
-      .mockResolvedValue(textResponse);
+    generateContent.mockRejectedValueOnce(statusError(503)).mockResolvedValue(textResponse);
 
     await gemini.generate([]);
     await gemini.generate([]);
 
-    expect(modelsCalled(generateContent)).toEqual([
-      'main-model',
-      'main-model',
-      'backup-model',
-      'backup-model',
-    ]);
+    expect(modelsCalled(generateContent)).toEqual(['main-model', 'backup-model', 'backup-model']);
+  });
+
+  it('tries a list of fallback models in order', async () => {
+    const gemini = new GeminiClient({
+      apiKey: 'k',
+      model: 'main-model',
+      fallbackModel: 'backup-1, backup-2',
+      systemInstruction: '',
+      tools: [],
+      busyUntil: new Map(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      warn: jest.fn(),
+    });
+    const generateContent = jest
+      .fn()
+      .mockRejectedValueOnce(statusError(503))
+      .mockRejectedValueOnce(statusError(504))
+      .mockResolvedValueOnce(textResponse);
+    (gemini as unknown as { ai: { models: { generateContent: jest.Mock } } }).ai.models.generateContent =
+      generateContent;
+
+    await expect(gemini.generate([])).resolves.toMatchObject({ text: 'Hello' });
+    expect(modelsCalled(generateContent)).toEqual(['main-model', 'backup-1', 'backup-2']);
   });
 
   it('gives up when every model stays busy', async () => {

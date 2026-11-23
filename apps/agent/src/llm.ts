@@ -26,7 +26,7 @@ export interface LlmClient {
 export interface GeminiOptions {
   apiKey: string;
   model: string;
-  /** Used when the main model stays busy (for example 503 "high demand" on the free tier). */
+  /** Used in order when the main model stays busy (503 "high demand" on the free tier); comma-separated list. */
   fallbackModel?: string;
   systemInstruction: string;
   tools: FunctionDeclaration[];
@@ -39,14 +39,15 @@ export interface GeminiOptions {
   busyUntil?: Map<string, number>;
 }
 
-// Temporary errors: rate limit and overloaded model (fast failures, retried once on the same model) and
-// 504 deadline exceeded (slow: the next model is tried at once).
-const RETRY_SAME_MODEL_STATUS = new Set([429, 500, 503]);
-const MOVE_ON_STATUS = new Set([504]);
+// Temporary errors. A rate limit or an internal error is retried once on the same model; an overloaded
+// model (503) or a deadline error (504) moves to the next model at once, because on the free tier
+// another model is usually available while the busy one stays busy for a while.
+const RETRY_SAME_MODEL_STATUS = new Set([429, 500]);
+const MOVE_ON_STATUS = new Set([503, 504]);
 const ATTEMPTS_PER_MODEL = 2;
 const RETRY_DELAY_MS = 2000;
 // The SDK passes this to Gemini as the request deadline; an overloaded model answers 504 when it expires.
-const DEFAULT_TIMEOUT_MS = 25_000;
+const DEFAULT_TIMEOUT_MS = 35_000;
 // A model that stayed busy is skipped for a while, so every question does not wait for it again.
 const BUSY_COOLDOWN_MS = 5 * 60_000;
 const SHARED_BUSY_UNTIL = new Map<string, number>();
@@ -68,7 +69,8 @@ export class GeminiClient implements LlmClient {
   constructor(private readonly options: GeminiOptions) {
     this.ai = new GoogleGenAI({ apiKey: options.apiKey, httpOptions: { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS } });
     const { model, fallbackModel } = options;
-    this.models = fallbackModel && fallbackModel !== model ? [model, fallbackModel] : [model];
+    const fallbacks = (fallbackModel ?? '').split(',').map((name) => name.trim()).filter(Boolean);
+    this.models = [...new Set([model, ...fallbacks])];
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.warn = options.warn ?? ((message) => console.warn(message));
     this.now = options.now ?? Date.now;

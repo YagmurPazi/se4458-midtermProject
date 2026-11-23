@@ -1,4 +1,4 @@
-Test run: 2026-11-19T13:06:57Z (commit 8beef6e + uncommitted review fixes)
+Test run: 2026-11-23T17:49:51Z (commit 59c353f plus the web chat changes committed together with this file)
 No cloud and no live LLM are used: the agent tests use a scripted fake LLM.
 
 $ npm test   (all workspaces, unit tests)
@@ -10,34 +10,34 @@ PASS src/agent.spec.ts
 PASS src/llm.spec.ts
 PASS src/chat-server.spec.ts
 Test Suites: 4 passed, 4 total
-Tests:       68 passed, 68 total
+Tests:       69 passed, 69 total
 Snapshots:   0 total
-Time:        2.571 s, estimated 4 s
+Time:        3.42 s, estimated 4 s
 > mcp-server@0.1.0 test
-PASS src/policy-index.spec.ts
 PASS src/policy-chunks.spec.ts
+PASS src/policy-index.spec.ts
 PASS src/http-app.spec.ts
 Test Suites: 3 passed, 3 total
 Tests:       23 passed, 23 total
 Snapshots:   0 total
-Time:        1.863 s, estimated 3 s
+Time:        2.119 s, estimated 3 s
 > tuition-api@0.1.0 test
-PASS src/banking/payments.service.spec.ts
 PASS src/admin/unpaid-tuition.service.spec.ts
-PASS src/admin/tuition-admin.service.spec.ts
 PASS src/tuition/tuition-query.service.spec.ts
-PASS src/auth/password.spec.ts
+PASS src/banking/payments.service.spec.ts
+PASS src/admin/tuition-admin.service.spec.ts
 PASS src/health/health.controller.spec.ts
+PASS src/auth/password.spec.ts
 PASS src/admin/tuition-batch.service.spec.ts
 PASS src/auth/auth.service.spec.ts
-PASS src/app.http.spec.ts
+PASS src/app.http.spec.ts (5.344 s)
 Test Suites: 9 passed, 9 total
 Tests:       103 passed, 103 total
 Snapshots:   0 total
-Time:        5.078 s
+Time:        5.859 s, estimated 6 s
 
 $ npm run test:int -w apps/tuition-api   (integration tests against PostgreSQL in Docker)
 PASS src/tuition.int-spec.ts
 Test Suites: 1 passed, 1 total
 Tests:       14 passed, 14 total
-Time:        1.968 s, estimated 3 s
+Time:        3.968 s

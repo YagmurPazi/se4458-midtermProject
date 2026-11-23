@@ -19,6 +19,7 @@ const app = createChatServer({
   api,
   publicDir: join(__dirname, '..', 'public'),
   secureCookies: process.env.CHAT_SECURE_COOKIES === 'true',
+  swaggerUrl: `${config.gatewayUrl}/api/docs`,
   createAgent: (session) =>
     new TuitionAgent({
       llm: new GeminiClient({

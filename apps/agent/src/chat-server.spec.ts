@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import request from 'supertest';
 import { AgentReply } from './agent';
 import { ChatAgent, createChatServer } from './chat-server';
-import { ApiError, Session, TuitionApi } from './tuition-api';
+import { ApiError, NotAStudentError, Session, TuitionApi } from './tuition-api';
 
 // The web chat server with a fake API and fake agents: no gateway, MCP or LLM is used.
 
@@ -47,6 +47,7 @@ function setup(
     api,
     createAgent,
     publicDir: join(__dirname, '..', 'public'),
+    swaggerUrl: 'https://gateway.test/api/docs',
     now: () => clock,
     ...overrides,
   });
@@ -103,14 +104,18 @@ describe('chat server', () => {
         message: 'Invalid student number or password.',
       });
 
-    api.login.mockRejectedValueOnce(
-      new ApiError(403, 'NOT_A_STUDENT', 'Please log in with a student account.'),
-    );
+    api.login.mockRejectedValueOnce(new NotAStudentError('ADMIN'));
     const res = await request(app)
       .post('/api/login')
-      .send({ username: 'bank', password: 'x' })
+      .send({ username: 'admin', password: 'x' })
       .expect(403);
-    expect(res.body.error).toBe('NOT_A_STUDENT');
+    expect(res.body).toEqual({
+      error: 'NOT_A_STUDENT',
+      role: 'ADMIN',
+      message: expect.stringContaining('Welcome, admin!'),
+      swaggerUrl: 'https://gateway.test/api/docs',
+    });
+    expect(res.headers['set-cookie']).toBeUndefined(); // no chat session for staff accounts
 
     await request(app).post('/api/login').send({ username: '', password: '' }).expect(400);
   });

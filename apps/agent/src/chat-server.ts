@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import express, { Express, Request, Response } from 'express';
 import { AgentReply } from './agent';
-import { ApiError, Session, TuitionApi } from './tuition-api';
+import { ApiError, NotAStudentError, Session, TuitionApi } from './tuition-api';
 
 // Web front end of the agent: a static chat page plus a small JSON API.
 // Each logged-in student gets their own TuitionAgent (and so their own history and pending payment),
@@ -19,6 +19,8 @@ export interface ChatServerOptions {
   publicDir: string;
   /** Mark the session cookie Secure (behind HTTPS). */
   secureCookies?: boolean;
+  /** Shown to ADMIN and BANK accounts, which use the API directly instead of the chat. */
+  swaggerUrl?: string;
   maxSessions?: number;
   maxMessagesPerSession?: number;
   maxMessageLength?: number;
@@ -59,6 +61,7 @@ export function createChatServer(options: ChatServerOptions): Express {
     createAgent,
     publicDir,
     secureCookies = false,
+    swaggerUrl,
     maxSessions = 100,
     maxMessagesPerSession = 40,
     maxMessageLength = 1000,
@@ -133,6 +136,16 @@ export function createChatServer(options: ChatServerOptions): Express {
       });
       res.cookie(COOKIE, id, cookieOptions).json({ studentNo: session.studentNo });
     } catch (error) {
+      if (error instanceof NotAStudentError) {
+        // A valid staff account: greet it and point to the API, but do not open a chat session.
+        res.status(403).json({
+          error: 'NOT_A_STUDENT',
+          role: error.role,
+          message: `Welcome, ${error.role.toLowerCase()}! This assistant is for students. Admin and bank operations are available in the API (Swagger UI).`,
+          ...(swaggerUrl && { swaggerUrl }),
+        });
+        return;
+      }
       if (error instanceof ApiError && error.status < 500) {
         const code = error.code === 'NOT_A_STUDENT' ? 'NOT_A_STUDENT' : 'INVALID_CREDENTIALS';
         const message =

@@ -29,7 +29,10 @@ describe('HttpTuitionApi', () => {
   it('refuses a non-student login', async () => {
     jest.spyOn(globalThis, 'fetch').mockImplementation(respond(200, { accessToken: 't', role: 'BANK', studentNo: null }));
 
-    await expect(api.login('bank', 'secret')).rejects.toMatchObject({ code: 'NOT_A_STUDENT' });
+    await expect(api.login('bank', 'secret')).rejects.toMatchObject({
+      code: 'NOT_A_STUDENT',
+      role: 'BANK',
+    });
   });
 
   it("queries the session's own student number with the bearer token", async () => {

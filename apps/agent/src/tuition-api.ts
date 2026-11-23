@@ -41,6 +41,13 @@ export class ApiError extends Error {
   }
 }
 
+/** Login succeeded, but the account is not a student account (ADMIN or BANK). */
+export class NotAStudentError extends ApiError {
+  constructor(readonly role: string) {
+    super(403, 'NOT_A_STUDENT', 'The assistant is for students; please log in with a student account.');
+  }
+}
+
 /** What the agent needs from the API; tests replace it with a fake. */
 export interface TuitionApi {
   login(username: string, password: string): Promise<Session>;
@@ -59,7 +66,7 @@ export class HttpTuitionApi implements TuitionApi {
       { username, password },
     );
     if (body.role !== 'STUDENT' || !body.studentNo) {
-      throw new ApiError(403, 'NOT_A_STUDENT', 'The assistant is for students; please log in with a student account.');
+      throw new NotAStudentError(body.role);
     }
     return { accessToken: body.accessToken, role: body.role, studentNo: body.studentNo };
   }
