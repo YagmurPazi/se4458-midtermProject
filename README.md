@@ -485,6 +485,21 @@ All evidence files are in [`docs/evidence/`](docs/evidence). Tokens and keys are
 | Swagger UI through the cloud gateway | [screenshots/swagger-ui-cloud.png](docs/evidence/screenshots/swagger-ui-cloud.png) |
 | Web chat with tool trace, confirmation and payment | [web-chat-mcp-and-rest.png](docs/evidence/screenshots/web-chat-mcp-and-rest.png), [web-chat-payment-confirmation.png](docs/evidence/screenshots/web-chat-payment-confirmation.png), [web-chat-payment-done.png](docs/evidence/screenshots/web-chat-payment-done.png) (web chat container from the local Docker Compose stack; the same image runs in Azure) |
 
+### How to reproduce (for the instructor)
+Everything below uses the fictitious demo accounts from section 8 (password `Student#2026` for students). Students `20230015` to `20230024` were not used in the recorded demos, so their balances are still the seeded ones. Payments change the cloud data, so use a different student for each run.
+
+| What | How | Needs a key? |
+|---|---|---|
+| Agent scenarios (MCP only, REST only, both, confirmed payment) | Open the web chat https://tuition-chat.bluesea-79ab2835.swedencentral.azurecontainerapps.io, log in as a student and ask, for example: `When is the payment deadline?`, `What is my balance?`, `Can I pay my outstanding balance in installments?`, `Pay part of my balance: 500 dollars for Fall 2026.` then press **Confirm payment**. Open "Tool trace" under each answer to see the tools, inputs and results. | No |
+| Gateway: protected route, error responses, mobile limit | From the repository root: `MOBILE_STUDENT=20230020 OTHER_STUDENT=20230021 ./gateway/smoke-test.sh https://tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io` (the mobile limit counts per student per UTC day, so pick other students to run it again the same day) | No |
+| REST API by hand | Swagger UI https://tuition-gateway.bluesea-79ab2835.swedencentral.azurecontainerapps.io/api/docs: call `POST /api/v1/auth/login` (for example `bank` / `Bank#2026` or `admin` / `Admin#2026`), copy `accessToken`, press **Authorize**, then try the protected operations | No |
+| MCP retrieval | `npm ci && npm test -w apps/mcp-server` runs the retrieval tests offline. For a live MCP server: `docker compose up -d --build mcp-server` with `.env` copied from `.env.example`, then `npm run build -w apps/mcp-server && MCP_URL=http://localhost:3001/mcp MCP_API_KEY=<value from .env> npm run demo -w apps/mcp-server` | No (local key from `.env`) |
+| Unit tests | `npm ci && npm test` (no cloud, no database, no LLM) | No |
+| Integration tests | See section 10 (PostgreSQL in Docker) | No |
+| Whole system locally | Section 8 (Docker Compose); the web chat additionally needs a free Gemini API key | Gemini key for the chat only |
+
+The cloud MCP server's API key is not published in the repository. The web chat uses it on the server side, so the instructor does not need it.
+
 ### Agent scenarios (cloud, live Gemini)
 Run on 2026-11-19 as student `20230001`; the questions are in [agent-questions.txt](docs/evidence/agent-questions.txt) and are reproducible with:
 ```bash
